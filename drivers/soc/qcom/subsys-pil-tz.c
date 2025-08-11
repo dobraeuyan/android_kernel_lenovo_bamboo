@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014,2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -811,6 +811,13 @@ static int subsys_ramdump(int enable, const struct subsys_desc *subsys)
 	return pil_do_ramdump(&d->desc, d->ramdump_dev);
 }
 
+static void subsys_free_memory(const struct subsys_desc *subsys)
+{
+	struct pil_tz_data *d = subsys_to_data(subsys);
+
+	pil_free_memory(&d->desc);
+}
+
 static void subsys_crash_shutdown(const struct subsys_desc *subsys)
 {
 	struct pil_tz_data *d = subsys_to_data(subsys);
@@ -906,6 +913,7 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 	d->desc.ops = &pil_ops_trusted;
 
 	d->desc.proxy_timeout = PROXY_TIMEOUT_MS;
+	d->desc.clear_fw_region = true;
 
 	rc = of_property_read_u32(pdev->dev.of_node, "qcom,proxy-timeout-ms",
 					&proxy_timeout);
@@ -938,6 +946,7 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 	d->subsys_desc.shutdown = subsys_shutdown;
 	d->subsys_desc.powerup = subsys_powerup;
 	d->subsys_desc.ramdump = subsys_ramdump;
+	d->subsys_desc.free_memory = subsys_free_memory;
 	d->subsys_desc.crash_shutdown = subsys_crash_shutdown;
 	d->subsys_desc.err_fatal_handler = subsys_err_fatal_intr_handler;
 	d->subsys_desc.wdog_bite_handler = subsys_wdog_bite_irq_handler;
@@ -961,6 +970,7 @@ err_subsys:
 	destroy_ramdump_device(d->ramdump_dev);
 err_ramdump:
 	pil_desc_release(&d->desc);
+	platform_set_drvdata(pdev, NULL);
 
 	return rc;
 }

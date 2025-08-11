@@ -19,22 +19,23 @@
 #include <linux/regulator/consumer.h>
 
 #undef CDBG
-#define CDBG(fmt, args...) pr_err(fmt, ##args)
+#define CDBG(fmt, args...) pr_debug(fmt, ##args)
+
 #ifdef CONFIG_SWITCH_CAMERA
 extern int irq_flag;
 extern int is_panorma;
-int poweer_down_camera_state=0;
-
 extern int switch_camera_suspend(void);
 extern int switch_camera_resume(void);
+extern int get_gpio_state(void);
+extern int otp_vendor_id;
+int poweer_down_camera_state=0;
+int power_up_flag=0;
+int start_flag=0;
 void write_front_register(void);
 void write_back_register(void);
-extern int get_gpio_state(void);
-int power_up_flag=0;
-extern int otp_vendor_id;
 struct msm_sensor_ctrl_t *s_ctrl_1;
-int start_flag=0;
 #endif
+
 static struct v4l2_file_operations msm_sensor_v4l2_subdev_fops;
 static void msm_sensor_adjust_mclk(struct msm_camera_power_ctrl_t *ctrl)
 {
@@ -435,8 +436,7 @@ int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 			__func__, __LINE__, s_ctrl);
 		return -EINVAL;
 	}
-    switch_camera_suspend();
-	poweer_down_camera_state=get_gpio_state();// 1:front   0:back
+
 	power_info = &s_ctrl->sensordata->power_info;
 	sensor_device_type = s_ctrl->sensor_device_type;
 	sensor_i2c_client = s_ctrl->sensor_i2c_client;
@@ -464,13 +464,7 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 			__func__, __LINE__, s_ctrl);
 		return -EINVAL;
 	}
-	power_up_flag=1;
-	if(get_gpio_state()==1)
-		write_front_register();
-    switch_camera_resume();
-	msleep(500);
-	poweer_down_camera_state = -1;
-	
+
 	power_info = &s_ctrl->sensordata->power_info;
 	sensor_i2c_client = s_ctrl->sensor_i2c_client;
 	slave_info = s_ctrl->sensordata->slave_info;
@@ -1067,12 +1061,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 	case CFG_WRITE_I2C_ARRAY: {
 		struct msm_camera_i2c_reg_setting conf_array;
 		struct msm_camera_i2c_reg_array *reg_setting = NULL;
-        static int panorma_flag=0;
-	
-		if(get_gpio_state()==1&&is_panorma==0&&panorma_flag==1)
-		       write_register_no_panorma();
-        
-			
+
 		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
 			pr_err("%s:%d failed: invalid state %d\n", __func__,
 				__LINE__, s_ctrl->sensor_state);
@@ -1126,17 +1115,9 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 		
 		/* change image direction when open camera first  end*/
 		#endif
-	
-	    if(is_panorma==1)
-		{	write_register_panorma();
-            panorma_flag=1;
-        
-		}
-		
 		conf_array.reg_setting = reg_setting;
 		rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write_table(
 			s_ctrl->sensor_i2c_client, &conf_array);
-		
 		kfree(reg_setting);
 		break;
 	}
@@ -1294,6 +1275,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			rc = -EFAULT;
 			break;
 		}
+
 		reg_setting = kzalloc(conf_array.size *
 			(sizeof(struct msm_camera_i2c_seq_reg_array)),
 			GFP_KERNEL);
@@ -1428,30 +1410,6 @@ int msm_sensor_check_id(struct msm_sensor_ctrl_t *s_ctrl)
 		rc = s_ctrl->func_tbl->sensor_match_id(s_ctrl);
 	else
 		rc = msm_sensor_match_id(s_ctrl);
-
-    printk("wusheng otp_vendor_id=%d    rc=%d\n",otp_vendor_id,rc);
-	printk("s_ctrl->sensordata->sensor_name=%s\n",s_ctrl->sensordata->sensor_name);
-    if(/*(rc == 0) && */(s_ctrl->sensordata->sensor_name != NULL) && ((strcmp(s_ctrl->sensordata->sensor_name,"ov8865_q8v18a") == 0) || (strcmp(s_ctrl->sensordata->sensor_name,"ov8865_q8v18a_sunny") == 0))) 
-    {
-	
-		if((strcmp(s_ctrl->sensordata->sensor_name,"ov8865_q8v18a_sunny") == 0) && (otp_vendor_id == 0x1))		
-		{			
-
-		pr_err("%s:it is ov8865_q8v18a_sunny\n", __func__);			
-		}		
-		else if((strcmp(s_ctrl->sensordata->sensor_name,"ov8865_q8v18a") == 0) && (otp_vendor_id == 0x7))		
-		{		
-		
-			pr_err("%s:it is ov8865_q8v18a\n", __func__);			
-        }		
-		else		
-		{	
-		
-		pr_err("%s:it is not support ov8865 s_ctrl->sensordata->sensor_name =%s\n", __func__,s_ctrl->sensordata->sensor_name);		
-		rc = -ENODEV;		
-		}
-	}
-
 	if (rc < 0)
 		pr_err("%s:%d match id failed rc %d\n", __func__, __LINE__, rc);
 	return rc;

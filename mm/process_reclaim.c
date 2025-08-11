@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -48,6 +48,10 @@ static unsigned long pressure_max = 90;
 module_param_named(pressure_min, pressure_min, ulong, S_IRUGO | S_IWUSR);
 module_param_named(pressure_max, pressure_max, ulong, S_IRUGO | S_IWUSR);
 
+static short min_score_adj = 360;
+module_param_named(min_score_adj, min_score_adj, short,
+	S_IRUGO | S_IWUSR);
+
 /*
  * Scheduling process reclaim workqueue unecessarily
  * when the reclaim efficiency is low does not make
@@ -88,14 +92,17 @@ static int test_task_flag(struct task_struct *p, int flag)
 {
 	struct task_struct *t = p;
 
-	do {
+	rcu_read_lock();
+	for_each_thread(p, t) {
 		task_lock(t);
 		if (test_tsk_thread_flag(t, flag)) {
 			task_unlock(t);
+			rcu_read_unlock();
 			return 1;
 		}
 		task_unlock(t);
-	} while_each_thread(p, t);
+	}
+	rcu_read_unlock();
 
 	return 0;
 }
@@ -111,7 +118,6 @@ static void swap_fn(struct work_struct *work)
 	int i;
 	int tasksize;
 	int total_sz = 0;
-	short min_score_adj = 360;
 	int total_scan = 0;
 	int total_reclaimed = 0;
 	int nr_to_reclaim;
@@ -123,10 +129,6 @@ static void swap_fn(struct work_struct *work)
 		short oom_score_adj;
 
 		if (tsk->flags & PF_KTHREAD)
-			continue;
-
-		/* if task no longer has any memory ignore it */
-		if (test_task_flag(tsk, TIF_MM_RELEASED))
 			continue;
 
 		if (test_task_flag(tsk, TIF_MEMDIE))
@@ -165,19 +167,19 @@ static void swap_fn(struct work_struct *work)
 		}
 	}
 
-	for (i = 0; i < si; i++) {
-		get_task_struct(selected[i].p);
+	for (i = 0; i < si; i++)
 		total_sz += selected[i].tasksize;
-	}
-
-	rcu_read_unlock();
 
 	/* Skip reclaim if total size is too less */
 	if (total_sz < SWAP_CLUSTER_MAX) {
-		for (i = 0; i < si; i++)
-			put_task_struct(selected[i].p);
+		rcu_read_unlock();
 		return;
 	}
+
+	for (i = 0; i < si; i++)
+		get_task_struct(selected[i].p);
+
+	rcu_read_unlock();
 
 	while (si--) {
 		nr_to_reclaim =
@@ -185,12 +187,6 @@ static void swap_fn(struct work_struct *work)
 		/* scan atleast a page */
 		if (!nr_to_reclaim)
 			nr_to_reclaim = 1;
-
-		if ((test_task_flag(selected[si].p, TIF_MM_RELEASED))
-			|| (test_task_flag(selected[si].p, TIF_MEMDIE))) {
-			put_task_struct(selected[si].p);
-			continue;
-		}
 
 		rp = reclaim_task_anon(selected[si].p, nr_to_reclaim);
 
@@ -237,7 +233,7 @@ static int vmpressure_notifier(struct notifier_block *nb,
 
 	if ((pressure >= pressure_min) && (pressure < pressure_max))
 		if (!work_pending(&swap_work))
-			queue_work(system_unbound_wq, &swap_work); //schedule_work(&swap_work);
+			queue_work(system_unbound_wq, &swap_work);
 	return 0;
 }
 

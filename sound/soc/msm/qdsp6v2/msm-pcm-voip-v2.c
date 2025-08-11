@@ -1,5 +1,6 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
  * only version 2 as published by the Free Software Foundation.
@@ -371,6 +372,13 @@ static void voip_process_ul_pkt(uint8_t *voc_pkt,
 		switch (prtd->mode) {
 		case MODE_AMR_WB:
 		case MODE_AMR: {
+			if (pkt_len <= DSP_FRAME_HDR_LEN) {
+				pr_err("%s: pkt_len %d is < required len\n",
+						__func__, pkt_len);
+				spin_unlock_irqrestore(&prtd->dsp_ul_lock,
+								dsp_flags);
+				return;
+			}
 			/* Remove the DSP frame info header. Header format:
 			 * Bits 0-3: Frame rate
 			 * Bits 4-7: Frame type
@@ -391,6 +399,13 @@ static void voip_process_ul_pkt(uint8_t *voc_pkt,
 		case MODE_4GV_NB:
 		case MODE_4GV_WB:
 		case MODE_4GV_NW: {
+			if (pkt_len <= DSP_FRAME_HDR_LEN) {
+				pr_err("%s: pkt_len %d is < required len\n",
+						__func__, pkt_len);
+				spin_unlock_irqrestore(&prtd->dsp_ul_lock,
+								dsp_flags);
+				return;
+			}
 			/* Remove the DSP frame info header.
 			 * Header format:
 			 * Bits 0-3: frame rate
@@ -428,6 +443,14 @@ static void voip_process_ul_pkt(uint8_t *voc_pkt,
 			buf_node->frame.frm_hdr.timestamp = timestamp;
 			voc_pkt = voc_pkt + DSP_FRAME_HDR_LEN;
 
+			if (pkt_len <= 2 * DSP_FRAME_HDR_LEN) {
+				pr_err("%s: pkt_len %d is < required len\n",
+						__func__, pkt_len);
+				spin_unlock_irqrestore(&prtd->dsp_ul_lock,
+								dsp_flags);
+				return;
+			}
+
 			/* There are two frames in the buffer. Length of the
 			 * first frame:
 			 */
@@ -463,6 +486,15 @@ static void voip_process_ul_pkt(uint8_t *voc_pkt,
 				buf_node->frame.frm_hdr.timestamp = timestamp;
 				voc_pkt = voc_pkt + DSP_FRAME_HDR_LEN;
 
+				if (pkt_len <= 2 * DSP_FRAME_HDR_LEN) {
+					pr_err(
+					"%s: pkt_len %d is < required len\n",
+					__func__, pkt_len);
+					spin_unlock_irqrestore(
+							&prtd->dsp_ul_lock,
+							dsp_flags);
+					return;
+				}
 				/* There are two frames in the buffer. Length
 				 * of the second frame:
 				 */
@@ -494,7 +526,11 @@ static void voip_process_ul_pkt(uint8_t *voc_pkt,
 		pr_debug("%s: pkt_len =%d, frame.pktlen=%d, timestamp=%d\n",
 			 __func__, pkt_len, buf_node->frame.pktlen, timestamp);
 
-		prtd->pcm_capture_irq_pos += prtd->pcm_capture_count;
+		if (prtd->mode == MODE_PCM)
+			prtd->pcm_capture_irq_pos += buf_node->frame.pktlen;
+		else
+			prtd->pcm_capture_irq_pos += prtd->pcm_capture_count;
+
 		spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
 		snd_pcm_period_elapsed(prtd->capture_substream);
 	} else {
@@ -656,7 +692,11 @@ static void voip_process_dl_pkt(uint8_t *voc_pkt, void *private_data)
 		pr_debug("%s: frame.pktlen=%d\n", __func__,
 			 buf_node->frame.pktlen);
 
-		prtd->pcm_playback_irq_pos += prtd->pcm_count;
+		if (prtd->mode == MODE_PCM)
+			prtd->pcm_playback_irq_pos += buf_node->frame.pktlen;
+		else
+			prtd->pcm_playback_irq_pos += prtd->pcm_count;
+
 		spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
 		snd_pcm_period_elapsed(prtd->playback_substream);
 	} else {
@@ -818,6 +858,11 @@ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
 					buf_node->frame.pktlen = count -
 					(sizeof(buf_node->frame.frm_hdr) +
 					 sizeof(buf_node->frame.pktlen));
+			}
+			if (ret) {
+				pr_err("%s: copy from user failed %d\n",
+				       __func__, ret);
+				return -EFAULT;
 			}
 			spin_lock_irqsave(&prtd->dsp_lock, dsp_flags);
 			list_add_tail(&buf_node->list, &prtd->in_queue);

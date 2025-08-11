@@ -28,16 +28,9 @@
 #include <linux/input-polldev.h>
 #include <linux/regulator/consumer.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
-
-#ifdef CONFIG_LXF_P5100_COMMON
-#define KXTJ_ACC_CALIBRATION	1
-#endif
 
 #define ACCEL_INPUT_DEV_NAME	"accelerometer"
 #define DEVICE_NAME		"kxtj9"
-
-//#define CONFIG_INPUT_KXTJ9_POLLED_MODE
 
 #define G_MAX			8000
 /* OUTPUT REGISTERS */
@@ -101,9 +94,6 @@ static struct sensors_classdev sensors_cdev = {
 	.delay_msec = 200,	/* millisecond */
 	.sensors_enable = NULL,
 	.sensors_poll_delay = NULL,
-#ifdef KXTJ_ACC_CALIBRATION
-	.sensors_calibrate = NULL,
-#endif
 };
 
 static const struct {
@@ -132,8 +122,6 @@ struct kxtj9_data {
 	u8 ctrl_reg1;
 	u8 data_ctrl;
 	u8 int_ctrl;
-	s16 accel_cali[3];
-	char calibrate_buf[99];
 	bool	power_enabled;
 	struct regulator *vdd;
 	struct regulator *vio;
@@ -165,9 +153,7 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 	s16 acc_data[3]; /* Data bytes from hardware xL, xH, yL, yH, zL, zH */
 	s16 x, y, z;
 	int err;
-	ktime_t ts;
 
-	ts = ktime_get_boottime();
 	err = kxtj9_i2c_read(tj9, XOUT_L, (u8 *)acc_data, 6);
 	if (err < 0)
 		dev_err(&tj9->client->dev, "accelerometer data read failed\n");
@@ -183,21 +169,16 @@ static void kxtj9_report_acceleration_data(struct kxtj9_data *tj9)
 		z <<= 4;
 	}
 
-	/*x >>= tj9->shift;
+	x >>= tj9->shift;
 	y >>= tj9->shift;
-	z >>= tj9->shift;*/
+	z >>= tj9->shift;
 
 	input_report_abs(tj9->input_dev, ABS_X, tj9->pdata.negate_x ? -x : x);
 	input_report_abs(tj9->input_dev, ABS_Y, tj9->pdata.negate_y ? -y : y);
 	input_report_abs(tj9->input_dev, ABS_Z, tj9->pdata.negate_z ? -z : z);
-	input_event(tj9->input_dev, EV_SYN, SYN_TIME_SEC,
-			ktime_to_timespec(ts).tv_sec);
-	input_event(tj9->input_dev, EV_SYN, SYN_TIME_NSEC,
-			ktime_to_timespec(ts).tv_nsec);
 	input_sync(tj9->input_dev);
 }
 
-#ifndef CONFIG_INPUT_KXTJ9_POLLED_MODE
 static irqreturn_t kxtj9_isr(int irq, void *dev)
 {
 	struct kxtj9_data *tj9 = dev;
@@ -213,7 +194,7 @@ static irqreturn_t kxtj9_isr(int irq, void *dev)
 
 	return IRQ_HANDLED;
 }
-#endif
+
 static int kxtj9_update_g_range(struct kxtj9_data *tj9, u8 new_g_range)
 {
 	switch (new_g_range) {
@@ -417,7 +398,6 @@ static int kxtj9_enable(struct kxtj9_data *tj9)
 {
 	int err;
 
-       dev_dbg(&tj9->client->dev, "%s:", __func__);
 	err = kxtj9_device_power_on(tj9);
 	if (err < 0)
 		return err;
@@ -468,7 +448,6 @@ fail:
 
 static void kxtj9_disable(struct kxtj9_data *tj9)
 {
-       dev_dbg(&tj9->client->dev, "%s:", __func__);
 	kxtj9_device_power_off(tj9);
 }
 
@@ -477,7 +456,6 @@ static void kxtj9_init_input_device(struct kxtj9_data *tj9,
 					      struct input_dev *input_dev)
 {
 	__set_bit(EV_ABS, input_dev->evbit);
-	input_set_capability(input_dev, EV_ABS, ABS_MISC);
 	input_set_abs_params(input_dev, ABS_X, -G_MAX, G_MAX, FUZZ, FLAT);
 	input_set_abs_params(input_dev, ABS_Y, -G_MAX, G_MAX, FUZZ, FLAT);
 	input_set_abs_params(input_dev, ABS_Z, -G_MAX, G_MAX, FUZZ, FLAT);
@@ -487,7 +465,6 @@ static void kxtj9_init_input_device(struct kxtj9_data *tj9,
 	input_dev->dev.parent = &tj9->client->dev;
 }
 
-#ifndef CONFIG_INPUT_KXTJ9_POLLED_MODE
 static int kxtj9_setup_input_device(struct kxtj9_data *tj9)
 {
 	struct input_dev *input_dev;
@@ -516,7 +493,7 @@ static int kxtj9_setup_input_device(struct kxtj9_data *tj9)
 
 	return 0;
 }
-#endif
+
 static int kxtj9_enable_set(struct sensors_classdev *sensors_cdev,
 					unsigned int enabled)
 {
@@ -611,23 +588,6 @@ static int kxtj9_poll_delay_set(struct sensors_classdev *sensors_cdev,
 
 	return 0;
 }
-#ifdef KXTJ_ACC_CALIBRATION
-static int kxtj9_self_calibration(struct sensors_classdev *sensors_cdev, int axis, int apply_now)
-{
-	struct kxtj9_data *tj9 = container_of(sensors_cdev,
-			struct kxtj9_data, cdev);
-	pr_info("xelloss kxtj9_self_calibration start");
-       snprintf(tj9->calibrate_buf, sizeof(tj9->calibrate_buf), "%d,%d,%d", 0, 0, 0);
-	sensors_cdev->params = tj9->calibrate_buf;
-
-	input_report_abs(tj9->input_dev, ABS_MISC, 1);
-       input_report_abs(tj9->input_dev, ABS_MISC, 0);
-       input_sync(tj9->input_dev);
-       pr_info("xelloss kxtj9_self_calibration");
-
-	return 0;
-}
-#endif
 
 /* Returns currently selected poll interval (in ms) */
 static ssize_t kxtj9_get_poll_delay(struct device *dev,
@@ -662,210 +622,9 @@ static ssize_t kxtj9_set_poll_delay(struct device *dev,
 static DEVICE_ATTR(poll_delay, S_IRUGO|S_IWUSR|S_IWGRP,
 			kxtj9_get_poll_delay, kxtj9_set_poll_delay);
 
-static int kionix_strtok(const char *buf, size_t count, char **token, const int token_nr)
-{
-	char *buf2 = (char *)kzalloc((count + 1) * sizeof(char), GFP_KERNEL);
-	char **token2 = token;
-	unsigned int num_ptr = 0, num_nr = 0, num_neg = 0;
-	int i = 0, start = 0, end = (int)count;
-
-	strcpy(buf2, buf);
-
-	/* We need to breakup the string into separate chunks in order for kstrtoint
-	 * or strict_strtol to parse them without returning an error. Stop when the end of
-	 * the string is reached or when enough value is read from the string */
-	while((start < end) && (i < token_nr)) {
-		/* We found a negative sign */
-		if(*(buf2 + start) == '-') {
-			/* Previous char(s) are numeric, so we store their value first before proceed */
-			if(num_nr > 0) {
-				/* If there is a pending negative sign, we adjust the variables to account for it */
-				if(num_neg) {
-					num_ptr--;
-					num_nr++;
-				}
-				*token2 = (char *)kzalloc((num_nr + 2) * sizeof(char), GFP_KERNEL);
-				strncpy(*token2, (const char *)(buf2 + num_ptr), (size_t) num_nr);
-				*(*token2+num_nr) = '\n';
-				i++;
-				token2++;
-				/* Reset */
-				num_ptr = num_nr = 0;
-			}
-			/* This indicates that there is a pending negative sign in the string */
-			num_neg = 1;
-		}
-		/* We found a numeric */
-		else if((*(buf2 + start) >= '0') && (*(buf2 + start) <= '9')) {
-			/* If the previous char(s) are not numeric, set num_ptr to current char */
-			if(num_nr < 1)
-				num_ptr = start;
-			num_nr++;
-		}
-		/* We found an unwanted character */
-		else {
-			/* Previous char(s) are numeric, so we store their value first before proceed */
-			if(num_nr > 0) {
-				if(num_neg) {
-					num_ptr--;
-					num_nr++;
-				}
-				*token2 = (char *)kzalloc((num_nr + 2) * sizeof(char), GFP_KERNEL);
-				strncpy(*token2, (const char *)(buf2 + num_ptr), (size_t) num_nr);
-				*(*token2+num_nr) = '\n';
-				i++;
-				token2++;
-			}
-			/* Reset all the variables to start afresh */
-			num_ptr = num_nr = num_neg = 0;
-		}
-		start++;
-	}
-
-	kfree(buf2);
-
-	return (i == token_nr) ? token_nr : -1;
-}
-
-/* Returns the calibration value of the device */
-static ssize_t kxtj9_get_cali(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
-
-	int calibration[3];
-
-
-	calibration[0] = - tj9->accel_cali[tj9->pdata.axis_map_x];
-	calibration[1] = tj9->accel_cali[tj9->pdata.axis_map_y];
-	calibration[2] = - tj9->accel_cali[tj9->pdata.axis_map_z];
-
-
-	return sprintf(buf, "%d,%d,%d\n", calibration[0], calibration[1], calibration[2]);
-}
-
-/* Allow users to change the calibration value of the device */
-static ssize_t kxtj9_set_cali(struct device *dev, struct device_attribute *attr,
-						const char *buf, size_t count)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
-	
-	const int cali_count = 3; /* How many calibration that we expect to get from the string */
-	char **buf2;
-	long calibration[cali_count];
-	int err = 0, i = 0;
-
-	buf2 = (char **)kzalloc(cali_count * sizeof(char *), GFP_KERNEL);
-
-	if(kionix_strtok(buf, count, buf2, cali_count) < 0) {
-		dev_err(&tj9->client->dev, \
-				"%s: Not enough calibration data being read. " \
-				"No calibration data will be updated.\n", __func__);
-	}
-	else {
-		/* Convert string to integers  */
-		for(i = 0 ; i < cali_count ; i++) {
-			/*#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,35))
-			err = kstrtoint((const char *)*(buf2+i), 10, (int *)&calibration[i]);
-			if(err < 0) {
-				dev_err(&tj9->client->dev, \
-						"%s: kstrtoint returned err = %d." \
-						"No calibration data will be updated.\n", __func__ , err);
-				goto exit;
-			}
-			#else */
-			err = strict_strtol((const char *)*(buf2+i), 10, &calibration[i]);
-			if(err < 0) {
-				dev_err(&tj9->client->dev, \
-						"%s: strict_strtol returned err = %d." \
-						"No calibration data will be updated.\n", __func__ , err);
-				goto exit;
-			}
-			//#endif
-		}
-		
-		tj9->accel_cali[tj9->pdata.axis_map_x] = (int)calibration[0];
-		tj9->accel_cali[tj9->pdata.axis_map_y] = (int)calibration[1];
-		tj9->accel_cali[tj9->pdata.axis_map_z] = (int)calibration[2];
-
-	}
-
-exit:
-	for(i = 0 ; i < cali_count ; i++)
-		kfree(*(buf2+i));
-
-	kfree(buf2);
-
-	return (err < 0) ? err : count;
-}
-
-static DEVICE_ATTR(cali, S_IRUGO|S_IWUSR|S_IWGRP,
-			kxtj9_get_cali, kxtj9_set_cali);
-
-static ssize_t kxtj9_do_cali(struct device *dev,
-					struct device_attribute *attr,
-					const char *buf, size_t count)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
-	unsigned int docali;
-	int error;
-	s16 acc_data[3]; /* Data bytes from hardware xL, xH, yL, yH, zL, zH */
-	s16 cali_buf_x, cali_buf_y, cali_buf_z;
-	s16 calibration[3];
-
-	error = kstrtouint(buf, 10, &docali);
-	if (error < 0)
-		return error;
-
-	if(0 != docali)
-	{
-		cali_buf_x = 0;
-		cali_buf_y = 0;
-		cali_buf_z = 0;
-		
-			error = kxtj9_i2c_read(tj9, XOUT_L, (u8 *)acc_data, 6);
-			if (error < 0)
-			{
-				dev_err(&tj9->client->dev, "accelerometer data read failed\n");
-				return error;
-			}
-			
-			cali_buf_x += le16_to_cpu(acc_data[tj9->pdata.axis_map_x]);
-			cali_buf_y += le16_to_cpu(acc_data[tj9->pdata.axis_map_y]);
-			cali_buf_z += le16_to_cpu(acc_data[tj9->pdata.axis_map_z]);
-		
-		calibration[0] = cali_buf_x;
-		calibration[1] = cali_buf_y;
-		calibration[2] = cali_buf_z;
-		/* 8 bits output mode support */
-		if (!(tj9->ctrl_reg1 & RES_12BIT)) 
-		{
-			calibration[0] <<= 4;
-			calibration[1] <<= 4;
-			calibration[2] <<= 4;
-		}
-
-		tj9->accel_cali[tj9->pdata.axis_map_x] = (int)calibration[0];
-		tj9->accel_cali[tj9->pdata.axis_map_y] = (int)calibration[1];
-		tj9->accel_cali[tj9->pdata.axis_map_z] = (int)calibration[2];
-	}
-	
-	return count;
-}
-
-
-
-static DEVICE_ATTR(do_cali, S_IRUGO|S_IWUSR|S_IWGRP,
-			NULL, kxtj9_do_cali);
-
 static struct attribute *kxtj9_attributes[] = {
 	&dev_attr_enable.attr,
 	&dev_attr_poll_delay.attr,
-	&dev_attr_cali.attr,
-	&dev_attr_do_cali.attr,
 	NULL
 };
 
@@ -917,8 +676,6 @@ static int kxtj9_setup_polled_device(struct kxtj9_data *tj9)
 	tj9->input_dev = poll_dev->input;
 
 	poll_dev->private = tj9;
-	poll_dev->poll_interval_max = 500;
-	poll_dev->poll_interval = 100;
 	poll_dev->poll = kxtj9_poll;
 	poll_dev->open = kxtj9_polled_input_open;
 	poll_dev->close = kxtj9_polled_input_close;
@@ -965,7 +722,7 @@ static int kxtj9_verify(struct kxtj9_data *tj9)
 		goto out;
 	}
 
-	retval = (retval != 0x09)
+	retval = (retval != 0x05 && retval != 0x07 && retval != 0x08)
 			? -EIO : 0;
 
 out:
@@ -1051,9 +808,6 @@ static int kxtj9_parse_dt(struct device *dev,
 	else
 		kxtj9_pdata->res_ctl = RES_8BIT;
 
-       kxtj9_pdata->gpio_int = of_get_named_gpio_flags(np,
-				"kionix,gpio-int", 0, NULL);
-
 	return 0;
 }
 #else
@@ -1063,41 +817,6 @@ static int kxtj9_parse_dt(struct device *dev,
 	return -ENODEV;
 }
 #endif /* !CONFIG_OF */
-
-static int kxtj9_get_interrupt_gpio(const struct kxtj9_data *data,
-			const unsigned int gpio)
-{
-	struct i2c_client *client = data->client;
-	int err;
-
-	if (!gpio_is_valid(gpio)) {
-		dev_err(&client->dev,
-			"gpio(%d) is invalid,\n", gpio);
-		return -EINVAL;
-	}
-
-	err = gpio_request(gpio, "kxtj9_gpio_int");
-	if (err) {
-		dev_err(&client->dev,
-			"Unable to request gpio %d, err=%d\n",
-			gpio, err);
-		return err;
-	}
-
-	err = gpio_direction_input(gpio);
-	if (err) {
-		dev_err(&client->dev,
-			"Unable to set gpio direction %d, err=%d\n",
-			gpio, err);
-		gpio_free(gpio);
-		return err;
-	}
-
-	client->irq = gpio_to_irq(gpio);
-	dev_dbg(&client->dev, "Interrupt gpio=%d, irq=%d\n", gpio, client->irq);
-
-	return 0;
-}
 
 static int kxtj9_probe(struct i2c_client *client,
 				 const struct i2c_device_id *id)
@@ -1168,18 +887,18 @@ static int kxtj9_probe(struct i2c_client *client,
 	tj9->ctrl_reg1 = tj9->pdata.res_ctl | tj9->pdata.g_range;
 	tj9->last_poll_interval = tj9->pdata.init_interval;
 
-       kxtj9_get_interrupt_gpio(tj9, tj9->pdata.gpio_int);
-       dev_info(&client->dev, "client->irq = %d\n", client->irq);
-#ifdef CONFIG_INPUT_KXTJ9_POLLED_MODE
-		err = kxtj9_setup_polled_device(tj9);
-		if (err)
-			goto err_power_off;
-		err = sysfs_create_group(&client->dev.kobj, &kxtj9_attribute_group);
-		if (err) {
-			pr_err(" kxtj9 sysfs create failed: %d\n", err);
-			goto err_power_off;
-		}
-#else
+	tj9->cdev = sensors_cdev;
+	/* The min_delay is used by userspace and the unit is microsecond. */
+	tj9->cdev.min_delay = tj9->pdata.min_interval * 1000;
+	tj9->cdev.delay_msec = tj9->pdata.init_interval;
+	tj9->cdev.sensors_enable = kxtj9_enable_set;
+	tj9->cdev.sensors_poll_delay = kxtj9_poll_delay_set;
+	err = sensors_classdev_register(&tj9->input_dev->dev, &tj9->cdev);
+	if (err) {
+		dev_err(&client->dev, "class device create failed: %d\n", err);
+		goto err_power_off;
+	}
+
 	if (client->irq) {
 		/* If in irq mode, populate INT_CTRL_REG1 and enable DRDY. */
 		tj9->int_ctrl |= KXTJ9_IEN | KXTJ9_IEA | KXTJ9_IEL;
@@ -1210,32 +929,16 @@ static int kxtj9_probe(struct i2c_client *client,
 		if (err)
 			goto err_power_off;
 	}
-#endif
-	tj9->cdev = sensors_cdev;
-	/* The min_delay is used by userspace and the unit is microsecond. */
-	tj9->cdev.min_delay = tj9->pdata.min_interval * 1000;
-	tj9->cdev.delay_msec = tj9->pdata.init_interval;
-	tj9->cdev.sensors_enable = kxtj9_enable_set;
-	tj9->cdev.sensors_poll_delay = kxtj9_poll_delay_set;
-#ifdef KXTJ_ACC_CALIBRATION
-	tj9->cdev.sensors_calibrate = kxtj9_self_calibration;
-#endif
-	err = sensors_classdev_register(&tj9->input_dev->dev, &tj9->cdev);
-	if (err) {
-		dev_err(&client->dev, "class device create failed: %d\n", err);
-		goto err_power_off;
-	}
 
-	dev_info(&client->dev, "%s: kxtj9_probe OK.\n", __func__);
+
+	dev_dbg(&client->dev, "%s: kxtj9_probe OK.\n", __func__);
 	kxtj9_device_power_off(tj9);
 	return 0;
 
-#ifndef CONFIG_INPUT_KXTJ9_POLLED_MODE
 err_free_irq:
 	free_irq(client->irq, tj9);
 err_destroy_input:
 	input_unregister_device(tj9->input_dev);
-#endif
 err_power_off:
 	kxtj9_device_power_off(tj9);
 err_power_deinit:
@@ -1274,12 +977,12 @@ static int kxtj9_remove(struct i2c_client *client)
 }
 
 #ifdef CONFIG_PM_SLEEP
-static int kxtj9_suspend(struct i2c_client *client, pm_message_t mesg)
+static int kxtj9_suspend(struct device *dev)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
 	struct input_dev *input_dev = tj9->input_dev;
 
-       dev_dbg(&client->dev, "%s:", __func__);
 	mutex_lock(&input_dev->mutex);
 
 	if (input_dev->users && tj9->enable)
@@ -1289,13 +992,13 @@ static int kxtj9_suspend(struct i2c_client *client, pm_message_t mesg)
 	return 0;
 }
 
-static int kxtj9_resume(struct i2c_client *client)
+static int kxtj9_resume(struct device *dev)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
 	struct input_dev *input_dev = tj9->input_dev;
 	int retval = 0;
 
-       dev_dbg(&client->dev, "%s:", __func__);
 	mutex_lock(&input_dev->mutex);
 
 	if (input_dev->users && tj9->enable)
@@ -1305,6 +1008,8 @@ static int kxtj9_resume(struct i2c_client *client)
 	return retval;
 }
 #endif
+
+static SIMPLE_DEV_PM_OPS(kxtj9_pm_ops, kxtj9_suspend, kxtj9_resume);
 
 static const struct i2c_device_id kxtj9_id[] = {
 	{ DEVICE_NAME, 0 },
@@ -1324,9 +1029,8 @@ static struct i2c_driver kxtj9_driver = {
 		.name	= DEVICE_NAME,
 		.owner	= THIS_MODULE,
 		.of_match_table = kxtj9_match_table,
+		.pm	= &kxtj9_pm_ops,
 	},
-	.suspend    = kxtj9_suspend,
-	.resume     = kxtj9_resume,
 	.probe		= kxtj9_probe,
 	.remove		= kxtj9_remove,
 	.id_table	= kxtj9_id,

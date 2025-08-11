@@ -143,7 +143,14 @@ config SND_SOC_ARIZONA
 	default y if SND_SOC_WM5110=y
 	default m if SND_SOC_WM5102=m
 	default m if SND_SOC_WM5110=m
-
+	
+config SND_SOC_AW8738
+    tristate "Awinic AW8738/AW8736 Audio Amplifier"
+    select GPIOLIB
+    help
+      Enable support for the Awinic AW8738/AW8736 audio amplifier.
+      This driver controls the amplifier via one-wire pulse on a GPIO pin.
+      
 config SND_SOC_WM_HUBS
 	tristate
 	default y if SND_SOC_WM8993=y || SND_SOC_WM8994=y
@@ -367,9 +374,20 @@ config SND_SOC_WCD9306
 config SND_SOC_WCD9330
         tristate
 
+config SND_SOC_WSA881X
+        tristate
+
+config SND_SOC_WCD9335
+        tristate
+
+config SND_SOC_WSA881X
+        tristate
+	select REGMAP_SWR
+
 config SND_SOC_WCD9XXX
 	tristate
 	default y if SND_SOC_WCD9320=y || SND_SOC_WCD9306=y || SND_SOC_WCD9330=y
+	default y if SND_SOC_WCD9335=y
 
 config SND_SOC_MSM8X10_WCD
 	tristate
@@ -379,10 +397,20 @@ config SND_SOC_MSM8X16_WCD
 
 config SND_SOC_WCD_CPE
 	tristate
-	default y if SND_SOC_WCD9330=y
+	default y if SND_SOC_WCD9330=y || SND_SOC_WCD9335=y
+	default y if SND_SOC_MSM8909_WCD=y
 
 config SND_SOC_MSM8909_WCD
 	tristate
+
+config AUDIO_EXT_CLK
+	tristate
+	default y if SND_SOC_WCD9335=y || SND_SOC_WCD9330=y || SND_SOC_MSM8X16_WCD=y
+	default y if SND_SOC_MSM8909_WCD=y
+
+config SND_SOC_WCD_MBHC
+	tristate
+	default y if SND_SOC_MSM8909_WCD=y || SND_SOC_MSM8X16_WCD=y
 
 config SND_SOC_WL1273
 	tristate

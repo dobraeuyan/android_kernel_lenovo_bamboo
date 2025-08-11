@@ -45,5 +45,5 @@ struct msm_eeprom_ctrl_t {
 	struct msm_eeprom_board_info *eboard_info;
 	uint32_t subdev_id;
 };
-int otp_vendor_id=0;
+
 #endif

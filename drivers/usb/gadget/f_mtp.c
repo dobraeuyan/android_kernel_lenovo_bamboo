@@ -26,6 +26,8 @@
 #include <linux/err.h>
 #include <linux/interrupt.h>
 
+#include <linux/seq_file.h>
+#include <linux/debugfs.h>
 #include <linux/types.h>
 #include <linux/file.h>
 #include <linux/device.h>
@@ -48,7 +50,6 @@
 #define STATE_BUSY                  2   /* processing userspace calls */
 #define STATE_CANCELED              3   /* transaction canceled by host */
 #define STATE_ERROR                 4   /* error from completion routine */
-#define STATE_RESET                 5   /* reset from device reset request */
 
 /* number of tx and rx requests to allocate */
 #define MTP_TX_REQ_MAX 8
@@ -67,7 +68,8 @@
 /* constants for device status */
 #define MTP_RESPONSE_OK             0x2001
 #define MTP_RESPONSE_DEVICE_BUSY    0x2019
-#define MTP_RESPONSE_DEVICE_CANCEL	0x201F
+
+#define MAX_ITERATION		100
 
 unsigned int mtp_rx_req_len = MTP_BULK_BUFFER_SIZE;
 module_param(mtp_rx_req_len, uint, S_IRUGO | S_IWUSR);
@@ -118,11 +120,15 @@ struct mtp_dev {
 	uint16_t xfer_command;
 	uint32_t xfer_transaction_id;
 	int xfer_result;
-//Added MTP MSFT OS Descriptor from mtk
-	char	usb_functions[32];
-	int		curr_mtp_func_index;
-	int		usb_functions_no;
-//Added MTP MSFT OS Descriptor from mtk
+	struct {
+		unsigned long vfs_rbytes;
+		unsigned long vfs_wbytes;
+		unsigned vfs_rtime;
+		unsigned vfs_wtime;
+	} perf[MAX_ITERATION];
+	unsigned dbg_read_index;
+	unsigned dbg_write_index;
+	bool is_ptp;
 };
 
 static struct usb_interface_descriptor mtp_interface_desc = {
@@ -310,65 +316,6 @@ static u8 mtp_os_string[] = {
 	0
 };
 
-//Added MTP MSFT OS Descriptor from mtk
-/* Microsoft Extended Property OS Feature Descriptor Header Section */
-struct mtp_ext_prop_desc_header {
-	__le32	dwLength;
-	__u16	bcdVersion;
-	__le16	wIndex;
-	__u16	wCount;
-};
-
-/* Microsoft xtended Property OS Feature Function Section */
-struct mtp_ext_prop_desc_property {
-	__le32	dwSize;
-	__le32	dwPropertyDataType;
-	__le16	wPropertyNameLength;
-	__u8	bPropertyName[8];		//MTP
-	__le32	dwPropertyDataLength;
-	__u8	bPropertyData[22];		//MTP Device
-}mtp_ext_prop_desc_property;
-
-/* MTP Extended Configuration Descriptor */
-struct {
-	struct mtp_ext_prop_desc_header	header;
-	struct mtp_ext_prop_desc_property customProp;
-} mtp_ext_prop_desc = {
-	.header = {
-		.dwLength = __constant_cpu_to_le32(sizeof(mtp_ext_prop_desc)),
-		.bcdVersion = __constant_cpu_to_le16(0x0100),
-		.wIndex = __constant_cpu_to_le16(5),
-		.wCount = __constant_cpu_to_le16(1),
-	},
-	.customProp = {
-		.dwSize = __constant_cpu_to_le32(sizeof(mtp_ext_prop_desc_property)),
-		.dwPropertyDataType = __constant_cpu_to_le32(1),
-		.wPropertyNameLength = __constant_cpu_to_le16(8),
-		.bPropertyName = {'M', 0, 'T', 0, 'P', 0, 0, 0},		//MTP
-		.dwPropertyDataLength = __constant_cpu_to_le32(22),
-		.bPropertyData = {'M', 0, 'T', 0, 'P', 0, ' ', 0, 'D', 0, 'e', 0, 'v', 0, 'i', 0, 'c', 0, 'e', 0, 0, 0},		//MTP Device
-	},
-};
-
-#define MSFT_bMS_VENDOR_CODE	1
-#define USB_MTP_FUNCTIONS		6
-
-#define USB_MTP			"mtp\n"
-#define USB_MTP_ADB		"mtp,ffs\n"
-#define USB_MTP_UMS		"mtp,mass_storage\n"
-#define USB_MTP_UMS_ADB	"mtp,mass_storage,ffs\n"
-
-
-static char * USB_MTP_FUNC[USB_MTP_FUNCTIONS] =
-{
-	USB_MTP,
-	USB_MTP_ADB,
-	USB_MTP_UMS,
-	USB_MTP_UMS_ADB
-};
-
-//Added MTP MSFT OS Descriptor from mtk
-
 /* Microsoft Extended Configuration Descriptor Header Section */
 struct mtp_ext_config_desc_header {
 	__le32	dwLength;
@@ -388,10 +335,12 @@ struct mtp_ext_config_desc_function {
 };
 
 /* MTP Extended Configuration Descriptor */
-struct {
+struct ext_mtp_desc {
 	struct mtp_ext_config_desc_header	header;
 	struct mtp_ext_config_desc_function    function;
-} mtp_ext_config_desc = {
+};
+
+struct ext_mtp_desc  mtp_ext_config_desc = {
 	.header = {
 		.dwLength = __constant_cpu_to_le32(sizeof(mtp_ext_config_desc)),
 		.bcdVersion = __constant_cpu_to_le16(0x0100),
@@ -405,78 +354,19 @@ struct {
 	},
 };
 
-//Added MTP MSFT OS Descriptor from mtk
-struct {
-	struct mtp_ext_config_desc_header	header;
-	struct mtp_ext_config_desc_function    function1;
-	struct mtp_ext_config_desc_function    function2;
-} mtp_ext_config_desc_2 = {
+struct ext_mtp_desc ptp_ext_config_desc = {
 	.header = {
-		.dwLength = __constant_cpu_to_le32(sizeof(mtp_ext_config_desc_2)),
-		.bcdVersion = __constant_cpu_to_le16(0x0100),
-		.wIndex = __constant_cpu_to_le16(4),
-		//.bCount = __constant_cpu_to_le16(1),
-		.bCount = 0x02,
-		.reserved = { 0 },
+		.dwLength = cpu_to_le32(sizeof(mtp_ext_config_desc)),
+		.bcdVersion = cpu_to_le16(0x0100),
+		.wIndex = cpu_to_le16(4),
+		.bCount = cpu_to_le16(1),
 	},
-	.function1 =
-	{
-	.bFirstInterfaceNumber = 0,
-	.bInterfaceCount = 1,
-	.compatibleID = { 'M', 'T', 'P', 0, 0, 0, 0, 0 },
-	.subCompatibleID = { 0 },
-	.reserved = { 0 },
-	},
-	.function2 =
-	{
-	.bFirstInterfaceNumber = 1,
-	.bInterfaceCount = 1,
-	.compatibleID = { 0 },
-	.subCompatibleID = { 0 },
-	.reserved = { 0 },
+	.function = {
+		.bFirstInterfaceNumber = 0,
+		.bInterfaceCount = 1,
+		.compatibleID = { 'P', 'T', 'P' },
 	},
 };
-struct {
-	struct mtp_ext_config_desc_header	header;
-	struct mtp_ext_config_desc_function    function1;
-	struct mtp_ext_config_desc_function    function2;
-	struct mtp_ext_config_desc_function    function3;
-} mtp_ext_config_desc_3 = {
-	.header = {
-		.dwLength = __constant_cpu_to_le32(sizeof(mtp_ext_config_desc_3)),
-		.bcdVersion = __constant_cpu_to_le16(0x0100),
-		.wIndex = __constant_cpu_to_le16(4),
-		//.bCount = __constant_cpu_to_le16(1),
-		.bCount = 0x03,
-		.reserved = { 0 },
-	},
-	.function1 =
-	{
-	.bFirstInterfaceNumber = 0,
-	.bInterfaceCount = 1,
-	.compatibleID = { 'M', 'T', 'P', 0, 0, 0, 0, 0 },
-	.subCompatibleID = { 0 },
-	.reserved = { 0 },
-	},
-	.function2 =
-	{
-	.bFirstInterfaceNumber = 1,
-	.bInterfaceCount = 1,
-	.compatibleID = { 0 },
-	.subCompatibleID = { 0 },
-	.reserved = { 0 },
-	},
-	.function3 =
-	{
-	.bFirstInterfaceNumber = 2,
-	.bInterfaceCount = 1,
-	.compatibleID = { 0 },
-	.subCompatibleID = { 0 },
-	.reserved = { 0 },
-	},
-};
-
-//Added MTP MSFT OS Descriptor from mtk
 
 struct mtp_device_status {
 	__le16	wLength;
@@ -615,7 +505,7 @@ static int mtp_create_bulk_endpoints(struct mtp_dev *dev,
 	struct usb_ep *ep;
 	int i;
 
-	DBG(cdev, "create_bulk_endpoints dev: %p\n", dev);
+	DBG(cdev, "create_bulk_endpoints dev: %pK\n", dev);
 
 	ep = usb_ep_autoconfig(cdev->gadget, in_desc);
 	if (!ep) {
@@ -708,33 +598,12 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 	struct mtp_dev *dev = fp->private_data;
 	struct usb_composite_dev *cdev = dev->cdev;
 	struct usb_request *req;
-	int r = count, xfer, len;
+	ssize_t r = count;
+	unsigned xfer;
+	int len;
 	int ret = 0;
 
 	DBG(cdev, "mtp_read(%zu)\n", count);
-
-	len = ALIGN(count, dev->ep_out->maxpacket);
-
-	if (len > mtp_rx_req_len)
-		return -EINVAL;
-
-//Added for bug from WHQL test form mtk
-
-	spin_lock_irq(&dev->lock);
-	if(dev->state == STATE_RESET)
-	{
-		//Added for MTP Develpment debug, more log for more debuging help
-		DBG(dev->cdev,      "%s: dev->state = %d, device is under reset state!! \n", __func__, dev->state);
-		//Added for USB Develpment debug, more log for more debuging help
-		dev->state = STATE_READY;
-		//Added for MTP Develpment debug, more log for more debuging help
-		DBG(dev->cdev,      "%s: dev->state = %d, change back to Ready state;!! \n", __func__, dev->state);
-		//Added for USB Develpment debug, more log for more debuging help
-		spin_unlock_irq(&dev->lock);
-		return -ECANCELED;
-	}
-	spin_unlock_irq(&dev->lock);
-//Added for bug from WHQL test form mtk
 
 	/* we will block until we're online */
 	DBG(cdev, "mtp_read: waiting for online state\n");
@@ -744,19 +613,10 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 		r = ret;
 		goto done;
 	}
+	len = ALIGN(count, dev->ep_out->maxpacket);
 
-//Added for bug from WHQL test form mtk
-	spin_lock_irq(&dev->lock);
-	if(dev->state == STATE_RESET)
-	{
-		DBG(dev->cdev,      "%s: dev->state = %d, device is under reset state!! \n", __func__, dev->state);
-		dev->state = STATE_READY;
-		DBG(dev->cdev,      "%s: dev->state = %d, change back to Ready state;!! \n", __func__, dev->state);
-		spin_unlock_irq(&dev->lock);
-		return -ECANCELED;
-	}
-	spin_unlock_irq(&dev->lock);
-//Added for bug from WHQL test form mtk
+	if (len > mtp_rx_req_len)
+		return -EINVAL;
 
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED) {
@@ -778,7 +638,7 @@ requeue_req:
 		r = -EIO;
 		goto done;
 	} else {
-		DBG(cdev, "rx %p queue\n", req);
+		DBG(cdev, "rx %pK queue\n", req);
 	}
 
 	/* wait for a request to complete */
@@ -803,24 +663,11 @@ requeue_req:
 		if (req->actual == 0)
 			goto requeue_req;
 
-		DBG(cdev, "rx %p %d\n", req, req->actual);
+		DBG(cdev, "rx %pK %d\n", req, req->actual);
 		xfer = (req->actual < count) ? req->actual : count;
 		r = xfer;
 		if (copy_to_user(buf, req->buf, xfer))
 			r = -EFAULT;
-//Added for bug from WHQL test form mtk
-	} 	else if(dev->state == STATE_RESET) {
-		//copy to user!!
-		/* If we got a 0-len packet, throw it back and try again. */
-		if (req->actual == 0)
-			goto requeue_req;
-
-		DBG(dev->cdev,   "rx %p %d\n", req, req->actual);
-		xfer = (req->actual < count) ? req->actual : count;
-		r = xfer;
-		if (copy_to_user(buf, req->buf, xfer))
-			r = -EFAULT;
-//Added for bug from WHQL test form mtk
 	} else
 		r = -EIO;
 
@@ -832,7 +679,7 @@ done:
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 
-	DBG(cdev, "mtp_read returning %d\n", r);
+	DBG(cdev, "mtp_read returning %zd\n", r);
 	return r;
 }
 
@@ -842,7 +689,8 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 	struct mtp_dev *dev = fp->private_data;
 	struct usb_composite_dev *cdev = dev->cdev;
 	struct usb_request *req = 0;
-	int r = count, xfer;
+	ssize_t r = count;
+	unsigned xfer;
 	int sendZLP = 0;
 	int ret;
 
@@ -855,14 +703,6 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 		spin_unlock_irq(&dev->lock);
 		return -ECANCELED;
 	}
-//Added for bug from WHQL test form mtk
-	if (dev->state == STATE_RESET) {
-		/* report cancelation to userspace */
-		dev->state = STATE_READY;
-		spin_unlock_irq(&dev->lock);
-		return -ECANCELED;
-	}
-//Added for bug from WHQL test form mtk
 	if (dev->state == STATE_OFFLINE) {
 		spin_unlock_irq(&dev->lock);
 		return -ENODEV;
@@ -927,19 +767,11 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		r = -ECANCELED;
-//Added for bug from WHQL test form mtk
-	else if(dev->state == STATE_RESET)
-	{
-		DBG(dev->cdev, "%s: dev->state = %d, device is under reset state!! \n", __func__, dev->state);
-		dev->state = STATE_READY;
-		r = -ECANCELED;
-	}
-//Added for bug from WHQL test form mtk
 	else if (dev->state != STATE_OFFLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 
-	DBG(cdev, "mtp_write returning %d\n", r);
+	DBG(cdev, "mtp_write returning %zd\n", r);
 	return r;
 }
 
@@ -957,6 +789,7 @@ static void send_file_work(struct work_struct *data)
 	int xfer, ret, hdr_size;
 	int r = 0;
 	int sendZLP = 0;
+	ktime_t start_time;
 
 	/* read our parameters */
 	smp_rmb();
@@ -993,12 +826,6 @@ static void send_file_work(struct work_struct *data)
 			r = -ECANCELED;
 			break;
 		}
-		else if (dev->state == STATE_RESET) {
-			DBG(dev->cdev, "%s: dev->state = %d, device is under reset state!! \n", __func__, dev->state);
-			r = -ECANCELED;
-			break;
-		}
-
 		if (!req) {
 			r = ret;
 			break;
@@ -1018,14 +845,19 @@ static void send_file_work(struct work_struct *data)
 			header->transaction_id =
 					__cpu_to_le32(dev->xfer_transaction_id);
 		}
-
+		start_time = ktime_get();
 		ret = vfs_read(filp, req->buf + hdr_size, xfer - hdr_size,
 								&offset);
 		if (ret < 0) {
 			r = ret;
 			break;
 		}
+
 		xfer = ret + hdr_size;
+		dev->perf[dev->dbg_read_index].vfs_rtime =
+			ktime_to_us(ktime_sub(ktime_get(), start_time));
+		dev->perf[dev->dbg_read_index].vfs_rbytes = xfer;
+		dev->dbg_read_index = (dev->dbg_read_index + 1) % MAX_ITERATION;
 		hdr_size = 0;
 
 		req->length = xfer;
@@ -1065,6 +897,7 @@ static void receive_file_work(struct work_struct *data)
 	int64_t count;
 	int ret, cur_buf = 0;
 	int r = 0;
+	ktime_t start_time;
 
 	/* read our parameters */
 	smp_rmb();
@@ -1097,7 +930,8 @@ static void receive_file_work(struct work_struct *data)
 		}
 
 		if (write_req) {
-			DBG(cdev, "rx %p %d\n", write_req, write_req->actual);
+			DBG(cdev, "rx %pK %d\n", write_req, write_req->actual);
+			start_time = ktime_get();
 			ret = vfs_write(filp, write_req->buf, write_req->actual,
 				&offset);
 			DBG(cdev, "vfs_write %d\n", ret);
@@ -1107,6 +941,11 @@ static void receive_file_work(struct work_struct *data)
 					dev->state = STATE_ERROR;
 				break;
 			}
+			dev->perf[dev->dbg_write_index].vfs_wtime =
+				ktime_to_us(ktime_sub(ktime_get(), start_time));
+			dev->perf[dev->dbg_write_index].vfs_wbytes = ret;
+			dev->dbg_write_index =
+				(dev->dbg_write_index + 1) % MAX_ITERATION;
 			write_req = NULL;
 		}
 
@@ -1253,11 +1092,6 @@ fail:
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		ret = -ECANCELED;
-	//Added for bug from WHQL test form mtk
-	else if (dev->state == STATE_RESET)
-		ret = -ECANCELED;
-	//Added for bug from WHQL test form mtk
-
 	else if (dev->state != STATE_OFFLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
@@ -1414,36 +1248,6 @@ static struct miscdevice mtp_device = {
 	.fops = &mtp_fops,
 };
 
-//MTP MSFT OS Descriptor from mtk
-static void mtp_read_usb_functions(int functions_no, char * buff)
-{
-	struct mtp_dev *dev = _mtp_dev;
-	int i;
-       	//Added for MTP Develpment debug, more log for more debuging help
-	DBG(dev->cdev, "%s: dev->curr_mtp_func_index = 0x%x\n",__func__, dev->curr_mtp_func_index);
-
-	/*if(dev->curr_mtp_func_index!=0xff)
-		return;*/
-       	//Added for MTP Develpment debug, more log for more debuging help
-
-	dev->usb_functions_no = functions_no;
-	dev->curr_mtp_func_index = 0xff;
-	memcpy(dev->usb_functions, buff, sizeof(dev->usb_functions));
-	DBG(dev->cdev, "%s:usb_functions_no = %d, usb_functions=%s\n",__func__, dev->usb_functions_no, dev->usb_functions);
-
-	for(i=0;i<USB_MTP_FUNCTIONS;i++)
-	{
-		if(!strcmp(dev->usb_functions, USB_MTP_FUNC[i]))
-		{	
-			DBG(dev->cdev, "%s: usb functions = %s, i = %d \n",__func__, dev->usb_functions, i);
-			dev->curr_mtp_func_index = i;
-			break;
-		}
-	}
-
-}
-//MTP MSFT OS Descriptor from mtk
-
 static int mtp_ctrlrequest(struct usb_composite_dev *cdev,
 				const struct usb_ctrlrequest *ctrl)
 {
@@ -1472,59 +1276,26 @@ static int mtp_ctrlrequest(struct usb_composite_dev *cdev,
 		/* Handle MTP OS descriptor */
 		DBG(cdev, "vendor request: %d index: %d value: %d length: %d\n",
 			ctrl->bRequest, w_index, w_value, w_length);
-		//MTP MSFT OS Descriptor from mtk
-#if 0
-		//MTP MSFT OS Descriptor from mtk
+
 		if (ctrl->bRequest == 1
 				&& (ctrl->bRequestType & USB_DIR_IN)
 				&& (w_index == 4 || w_index == 5)) {
-			value = (w_length < sizeof(mtp_ext_config_desc) ?
-					w_length : sizeof(mtp_ext_config_desc));
-			memcpy(cdev->req->buf, &mtp_ext_config_desc, value);
-		}
-		//MTP MSFT OS Descriptor from mtk
-#endif
-		if (ctrl->bRequest == 1
-				&& (ctrl->bRequestType & USB_DIR_IN)
-				&& (w_index == 5)) {
-			value = (w_length < sizeof(mtp_ext_prop_desc) ?
-					w_length : sizeof(mtp_ext_prop_desc));
-			DBG(cdev, "vendor request: Property OS Feature, w_length = %d, value = %d \n", w_length, value);
-			memcpy(cdev->req->buf, &mtp_ext_prop_desc, value);
-		}
-		else if (ctrl->bRequest == 1
-				&& (ctrl->bRequestType & USB_DIR_IN)
-				&& (w_index == 4)) {
-
-			switch(dev->curr_mtp_func_index)
-			{
-			case 0:			//mtp
-				value = (w_length < sizeof(mtp_ext_config_desc) ?
-						w_length : sizeof(mtp_ext_config_desc));
-				memcpy(cdev->req->buf, &mtp_ext_config_desc, value);
-				break;
-			case 1:			//mtp,adb 
-			case 2:			//mtp,mass_storage
-			//case 4:			
-				value = (w_length < sizeof(mtp_ext_config_desc_2) ?
-						w_length : sizeof(mtp_ext_config_desc_2));
-				memcpy(cdev->req->buf, &mtp_ext_config_desc_2, value);
-				break;
-			case 3:			//mtp,mass_storage,adb
-			//case 5:			
-				value = (w_length < sizeof(mtp_ext_config_desc_3) ?
-						w_length : sizeof(mtp_ext_config_desc_3));
-				memcpy(cdev->req->buf, &mtp_ext_config_desc_3, value);
-				break;
-			default:			//unknown, 0xff
-				value = (w_length < sizeof(mtp_ext_config_desc) ?
-						w_length : sizeof(mtp_ext_config_desc));
-				memcpy(cdev->req->buf, &mtp_ext_config_desc, value);
-				break;
+			if (!dev->is_ptp) {
+				value = (w_length <
+						sizeof(mtp_ext_config_desc) ?
+						w_length :
+						sizeof(mtp_ext_config_desc));
+				memcpy(cdev->req->buf, &mtp_ext_config_desc,
+									value);
+			} else {
+				value = (w_length <
+						sizeof(ptp_ext_config_desc) ?
+						w_length :
+						sizeof(ptp_ext_config_desc));
+				memcpy(cdev->req->buf, &ptp_ext_config_desc,
+									value);
 			}
-
 		}
-		//MTP MSFT OS Descriptor from mtk
 	} else if ((ctrl->bRequestType & USB_TYPE_MASK) == USB_TYPE_CLASS) {
 		DBG(cdev, "class request: %d index: %d value: %d length: %d\n",
 			ctrl->bRequest, w_index, w_value, w_length);
@@ -1589,7 +1360,7 @@ mtp_function_bind(struct usb_configuration *c, struct usb_function *f)
 	int			ret;
 
 	dev->cdev = cdev;
-	DBG(cdev, "mtp_function_bind dev: %p\n", dev);
+	DBG(cdev, "mtp_function_bind dev: %pK\n", dev);
 
 	/* allocate interface ID(s) */
 	id = usb_interface_id(c, f);
@@ -1639,6 +1410,7 @@ mtp_function_unbind(struct usb_configuration *c, struct usb_function *f)
 	while ((req = mtp_req_get(dev, &dev->intr_idle)))
 		mtp_request_free(req, dev->ep_intr);
 	dev->state = STATE_OFFLINE;
+	dev->is_ptp = false;
 }
 
 static int mtp_function_set_alt(struct usb_function *f,
@@ -1745,7 +1517,121 @@ static int mtp_bind_config(struct usb_configuration *c, bool ptp_config)
 	dev->function.set_alt = mtp_function_set_alt;
 	dev->function.disable = mtp_function_disable;
 
+	dev->is_ptp = ptp_config;
 	return usb_add_function(c, &dev->function);
+}
+
+static int debug_mtp_read_stats(struct seq_file *s, void *unused)
+{
+	struct mtp_dev *dev = _mtp_dev;
+	int i;
+	unsigned long flags;
+	unsigned min, max = 0, sum = 0, iteration = 0;
+
+	seq_puts(s, "\n=======================\n");
+	seq_puts(s, "MTP Write Stats:\n");
+	seq_puts(s, "\n=======================\n");
+	spin_lock_irqsave(&dev->lock, flags);
+	min = dev->perf[0].vfs_wtime;
+	for (i = 0; i < MAX_ITERATION; i++) {
+		seq_printf(s, "vfs write: bytes:%ld\t\t time:%d\n",
+				dev->perf[i].vfs_wbytes,
+				dev->perf[i].vfs_wtime);
+		if (dev->perf[i].vfs_wbytes == mtp_rx_req_len) {
+			sum += dev->perf[i].vfs_wtime;
+			if (min > dev->perf[i].vfs_wtime)
+				min = dev->perf[i].vfs_wtime;
+			if (max < dev->perf[i].vfs_wtime)
+				max = dev->perf[i].vfs_wtime;
+			iteration++;
+		}
+	}
+
+	seq_printf(s, "vfs_write(time in usec) min:%d\t max:%d\t avg:%d\n",
+						min, max, sum / iteration);
+	min = max = sum = iteration = 0;
+	seq_puts(s, "\n=======================\n");
+	seq_puts(s, "MTP Read Stats:\n");
+	seq_puts(s, "\n=======================\n");
+
+	min = dev->perf[0].vfs_rtime;
+	for (i = 0; i < MAX_ITERATION; i++) {
+		seq_printf(s, "vfs read: bytes:%ld\t\t time:%d\n",
+				dev->perf[i].vfs_rbytes,
+				dev->perf[i].vfs_rtime);
+		if (dev->perf[i].vfs_rbytes == mtp_tx_req_len) {
+			sum += dev->perf[i].vfs_rtime;
+			if (min > dev->perf[i].vfs_rtime)
+				min = dev->perf[i].vfs_rtime;
+			if (max < dev->perf[i].vfs_rtime)
+				max = dev->perf[i].vfs_rtime;
+			iteration++;
+		}
+	}
+
+	seq_printf(s, "vfs_read(time in usec) min:%d\t max:%d\t avg:%d\n",
+						min, max, sum / iteration);
+	spin_unlock_irqrestore(&dev->lock, flags);
+	return 0;
+}
+
+static ssize_t debug_mtp_reset_stats(struct file *file, const char __user *buf,
+				 size_t count, loff_t *ppos)
+{
+	int clear_stats;
+	unsigned long flags;
+	struct mtp_dev *dev = _mtp_dev;
+
+	if (buf == NULL) {
+		pr_err("[%s] EINVAL\n", __func__);
+		goto done;
+	}
+
+	if (sscanf(buf, "%u", &clear_stats) != 1 || clear_stats != 0) {
+		pr_err("Wrong value. To clear stats, enter value as 0.\n");
+		goto done;
+	}
+
+	spin_lock_irqsave(&dev->lock, flags);
+	memset(&dev->perf[0], 0, MAX_ITERATION * sizeof(dev->perf[0]));
+	dev->dbg_read_index = 0;
+	dev->dbg_write_index = 0;
+	spin_unlock_irqrestore(&dev->lock, flags);
+done:
+	return count;
+}
+
+static int debug_mtp_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, debug_mtp_read_stats, inode->i_private);
+}
+
+static const struct file_operations debug_mtp_ops = {
+	.open = debug_mtp_open,
+	.read = seq_read,
+	.write = debug_mtp_reset_stats,
+};
+
+struct dentry *dent_mtp;
+static void mtp_debugfs_init(void)
+{
+	struct dentry *dent_mtp_status;
+	dent_mtp = debugfs_create_dir("usb_mtp", 0);
+	if (!dent_mtp || IS_ERR(dent_mtp))
+		return;
+
+	dent_mtp_status = debugfs_create_file("status", S_IRUGO | S_IWUSR,
+					dent_mtp, 0, &debug_mtp_ops);
+	if (!dent_mtp_status || IS_ERR(dent_mtp_status)) {
+		debugfs_remove(dent_mtp);
+		dent_mtp = NULL;
+		return;
+	}
+}
+
+static void mtp_debugfs_remove(void)
+{
+	debugfs_remove_recursive(dent_mtp);
 }
 
 static int mtp_setup(void)
@@ -1780,6 +1666,7 @@ static int mtp_setup(void)
 	if (ret)
 		goto err2;
 
+	mtp_debugfs_init();
 	return 0;
 
 err2:
@@ -1798,6 +1685,7 @@ static void mtp_cleanup(void)
 	if (!dev)
 		return;
 
+	mtp_debugfs_remove();
 	misc_deregister(&mtp_device);
 	destroy_workqueue(dev->wq);
 	_mtp_dev = NULL;

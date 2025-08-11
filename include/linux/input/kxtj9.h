@@ -25,7 +25,6 @@
 struct kxtj9_platform_data {
 	unsigned int min_interval;	/* minimum poll interval (in milli-seconds) */
 	unsigned int init_interval;	/* initial poll interval (in milli-seconds) */
-       int gpio_int;
 
 	/*
 	 * By default, x is axis 0, y is axis 1, z is axis 2; these can be

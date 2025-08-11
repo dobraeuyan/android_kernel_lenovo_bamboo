@@ -366,7 +366,7 @@ static void sn3191_led_set_brightness(struct led_classdev *led_cdev, enum led_br
 		sn3191_led_ctrl(pdata, pdata->led_breath_mode, true);
 	else
 		sn3191_led_ctrl(pdata, pdata->led_breath_mode, false);
-}
+}/*
 static void sn3191_led_set_brightness_bool(struct led_classdev *led_cdev, enum led_brightness value)
 {
 	struct sn3191_led_pdata *pdata = container_of(led_cdev, struct sn3191_led_pdata, led_cdev);
@@ -384,7 +384,7 @@ static void sn3191_led_set_brightness_bool(struct led_classdev *led_cdev, enum l
 	else
 		sn3191_led_ctrl(pdata, pdata->led_breath_mode, false);
 }
-
+*/
 static enum led_brightness sn3191_led_get_brightness(struct led_classdev *led_cdev)
 {
 	struct sn3191_led_pdata *pdata = container_of(led_cdev, struct sn3191_led_pdata, led_cdev);
@@ -1340,8 +1340,8 @@ static int sn3191_led_probe(struct i2c_client *client, const struct i2c_device_i
 //	pdata->led_cdev.name = "sn3191-breath-led";		// indicated in dtsi.
 	pdata->led_cdev.brightness = LED_OFF;
 	pdata->led_cdev.max_brightness = LED_FULL;
-	pdata->led_cdev.brightness_set = sn3191_led_set_brightness_bool; 
-//	pdata->led_cdev.brightness_set = sn3191_led_set_brightness; 
+	//pdata->led_cdev.brightness_set = sn3191_led_set_brightness_bool; 
+	pdata->led_cdev.brightness_set = sn3191_led_set_brightness; 
 	pdata->led_cdev.brightness_get = sn3191_led_get_brightness;
 
 	ret = led_classdev_register(&pdata->client->dev, &pdata->led_cdev);

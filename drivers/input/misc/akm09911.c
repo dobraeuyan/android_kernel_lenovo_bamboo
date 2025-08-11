@@ -36,10 +36,6 @@
 #include <linux/of_gpio.h>
 #include <linux/sensors.h>
 
-#ifdef CONFIG_LXF_P5100_COMMON
-#define AKM_MAG_CALIBRATION	1
-#endif
-
 #define AKM_DEBUG_IF			0
 #define AKM_HAS_RESET			1
 #define AKM_INPUT_DEVICE_NAME	"compass"
@@ -96,7 +92,6 @@ struct akm_compass_data {
 	uint8_t	sense_data[AKM_SENSOR_DATA_SIZE];
 	struct mutex accel_mutex;
 	int16_t accel_data[3];
-	char calibrate_buf[99];
 
 	struct mutex	val_mutex;
 	uint32_t		enable_flag;
@@ -130,7 +125,7 @@ static struct sensors_classdev sensors_cdev = {
 	.handle = SENSORS_MAGNETIC_FIELD_HANDLE,
 	.type = SENSOR_TYPE_MAGNETIC_FIELD,
 	.max_range = "1228.8",
-	.resolution = "0.0046875",
+	.resolution = "0.6",
 	.sensor_power = "0.35",
 	.min_delay = 10000,
 	.max_delay = 10000,
@@ -140,9 +135,6 @@ static struct sensors_classdev sensors_cdev = {
 	.delay_msec = 10,
 	.sensors_enable = NULL,
 	.sensors_poll_delay = NULL,
-#ifdef AKM_MAG_CALIBRATION
-	.sensors_calibrate = NULL,
-#endif
 };
 
 static struct akm_compass_data *s_akm;
@@ -1034,24 +1026,6 @@ static int akm_poll_delay_set(struct sensors_classdev *sensors_cdev,
 	return ret;
 }
 
-#ifdef AKM_MAG_CALIBRATION
-static int akm_self_calibration(struct sensors_classdev *sensors_cdev, int axis, int apply_now)
-{
-	struct akm_compass_data *akm = container_of(sensors_cdev,
-			struct akm_compass_data, cdev);
-
-       snprintf(akm->calibrate_buf, sizeof(akm->calibrate_buf), "%d,%d,%d", 0, 0, 0);
-	sensors_cdev->params = akm->calibrate_buf;
-
-	input_report_abs(akm->input, ABS_MISC, 1);
-       input_report_abs(akm->input, ABS_MISC, 0);
-       input_sync(akm->input);
-       pr_info("xelloss akm_self_calibration");
-
-	return 0;
-}
-#endif
-
 static ssize_t akm_compass_sysfs_delay_show(
 	struct akm_compass_data *akm, char *buf, int pos)
 {
@@ -1831,17 +1805,16 @@ static int akm_report_data(struct akm_compass_data *akm)
 	timestamp = ktime_get_boottime();
 
 	tmp = (int)((int16_t)(dat_buf[2]<<8)+((int16_t)dat_buf[1]));
-       //tmp = tmp * akm->sense_conf[0] / 128 + tmp;
-       tmp = tmp * (akm->sense_conf[0] + 128);
-       mag_x = tmp;
+	tmp = tmp * akm->sense_conf[0] / 128 + tmp;
+	mag_x = tmp;
 
-       tmp = (int)((int16_t)(dat_buf[4]<<8)+((int16_t)dat_buf[3]));
-       tmp = tmp * (akm->sense_conf[1] + 128);
-       mag_y = tmp;
+	tmp = (int)((int16_t)(dat_buf[4]<<8)+((int16_t)dat_buf[3]));
+	tmp = tmp * akm->sense_conf[1] / 128 + tmp;
+	mag_y = tmp;
 
-       tmp = (int)((int16_t)(dat_buf[6]<<8)+((int16_t)dat_buf[5]));
-       tmp = tmp * (akm->sense_conf[2] + 128);
-       mag_z = tmp;
+	tmp = (int)((int16_t)(dat_buf[6]<<8)+((int16_t)dat_buf[5]));
+	tmp = tmp * akm->sense_conf[2] / 128 + tmp;
+	mag_z = tmp;
 
 	dev_dbg(&akm->i2c->dev, "mag_x:%d mag_y:%d mag_z:%d\n",
 			mag_x, mag_y, mag_z);
@@ -2297,9 +2270,6 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	s_akm->cdev = sensors_cdev;
 	s_akm->cdev.sensors_enable = akm_enable_set;
 	s_akm->cdev.sensors_poll_delay = akm_poll_delay_set;
-#ifdef AKM_MAG_CALIBRATION
-	s_akm->cdev.sensors_calibrate = akm_self_calibration;
-#endif
 	s_akm->cdev.sensors_self_test = akm_self_test;
 
 	s_akm->delay[MAG_DATA_FLAG] = sensors_cdev.delay_msec * 1000000;

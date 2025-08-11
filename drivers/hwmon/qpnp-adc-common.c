@@ -1137,7 +1137,7 @@ int32_t qpnp_adc_scale_qrd_skue_batt_therm(struct qpnp_vadc_chip *chip,
 			struct qpnp_vadc_result *adc_chan_result)
 {
 	int64_t bat_voltage = 0;
-    pr_debug("gdd enter\n");
+
 	bat_voltage = qpnp_adc_scale_ratiometric_calib(adc_code,
 			adc_properties, chan_properties);
 

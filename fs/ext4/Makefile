@@ -2,9 +2,6 @@
 # Makefile for the linux ext4-filesystem routines.
 #
 
-#ifeq ($(LCT_CUSTOM_NAME),Lenovo)
-#	ccflags-y += -DDATA_PARTITION_PROTECT_ENABLE
-#endif
 obj-$(CONFIG_EXT4_FS) += ext4.o
 
 ext4-y	:= balloc.o bitmap.o dir.o file.o fsync.o ialloc.o inode.o page-io.o \

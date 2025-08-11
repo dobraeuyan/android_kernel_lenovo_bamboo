@@ -3,7 +3,7 @@
  * FocalTech ft5x06 TouchScreen driver.
  *
  * Copyright (c) 2010  Focal tech Ltd.
- * Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -41,7 +41,7 @@
 /* Early-suspend level */
 #define FT_SUSPEND_LEVEL 1
 #endif
-#include "lct_tp_fm_info.h"
+
 #define FT_DRIVER_VERSION	0x02
 
 #define FT_META_REGS		3
@@ -258,6 +258,7 @@ struct ft5x06_ts_data {
 	u8 fw_ver[3];
 	u8 fw_vendor_id;
 #if defined(CONFIG_FB)
+	struct work_struct fb_notify_work;
 	struct notifier_block fb_notif;
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
 	struct early_suspend early_suspend;
@@ -268,9 +269,6 @@ struct ft5x06_ts_data {
 	struct pinctrl_state *pinctrl_state_release;
 };
 
-#ifdef SUPPORT_READ_TP_VERSION
-	char tp_version[50] = {0};
-#endif
 static int ft5x06_ts_start(struct device *dev);
 static int ft5x06_ts_stop(struct device *dev);
 
@@ -1289,6 +1287,13 @@ static int ft5x06_ts_resume(struct device *dev)
 #endif
 
 #if defined(CONFIG_FB)
+static void fb_notify_resume_work(struct work_struct *work)
+{
+	struct ft5x06_ts_data *ft5x06_data =
+		container_of(work, struct ft5x06_ts_data, fb_notify_work);
+	ft5x06_ts_resume(&ft5x06_data->client->dev);
+}
+
 static int fb_notifier_callback(struct notifier_block *self,
 				 unsigned long event, void *data)
 {
@@ -1297,13 +1302,27 @@ static int fb_notifier_callback(struct notifier_block *self,
 	struct ft5x06_ts_data *ft5x06_data =
 		container_of(self, struct ft5x06_ts_data, fb_notif);
 
-	if (evdata && evdata->data && event == FB_EVENT_BLANK &&
-			ft5x06_data && ft5x06_data->client) {
+	if (evdata && evdata->data && ft5x06_data && ft5x06_data->client) {
 		blank = evdata->data;
-		if (*blank == FB_BLANK_UNBLANK)
-			ft5x06_ts_resume(&ft5x06_data->client->dev);
-		else if (*blank == FB_BLANK_POWERDOWN)
-			ft5x06_ts_suspend(&ft5x06_data->client->dev);
+		if (ft5x06_data->pdata->resume_in_workqueue) {
+			if (event == FB_EARLY_EVENT_BLANK &&
+						 *blank == FB_BLANK_UNBLANK)
+				schedule_work(&ft5x06_data->fb_notify_work);
+			else if (event == FB_EVENT_BLANK &&
+						 *blank == FB_BLANK_POWERDOWN) {
+				flush_work(&ft5x06_data->fb_notify_work);
+				ft5x06_ts_suspend(&ft5x06_data->client->dev);
+			}
+		} else {
+			if (event == FB_EVENT_BLANK) {
+				if (*blank == FB_BLANK_UNBLANK)
+					ft5x06_ts_resume(
+						&ft5x06_data->client->dev);
+				else if (*blank == FB_BLANK_POWERDOWN)
+					ft5x06_ts_suspend(
+						&ft5x06_data->client->dev);
+			}
+		}
 	}
 
 	return 0;
@@ -1639,11 +1658,6 @@ static int ft5x06_fw_upgrade(struct device *dev, bool force)
 
 	ft5x06_update_fw_ver(data);
 
-    #ifdef SUPPORT_READ_TP_VERSION
-	memset(tp_version, 0, sizeof(tp_version));
-	sprintf(tp_version, "Firmware version:0x%x\nfw_vendor_id:%d",data->fw_ver[0],data->fw_vendor_id);
-	init_tp_fm_info(0,tp_version,"IC:FT5x06");
-    #endif
 	FT_STORE_TS_INFO(data->ts_info, data->family_id, data->pdata->name,
 			data->pdata->num_max_touches, data->pdata->group_id,
 			data->pdata->fw_vkey_support ? "yes" : "no",
@@ -2058,6 +2072,9 @@ static int ft5x06_parse_dt(struct device *dev,
 	pdata->gesture_support = of_property_read_bool(np,
 						"focaltech,gesture-support");
 
+	pdata->resume_in_workqueue = of_property_read_bool(np,
+					"focaltech,resume-in-workqueue");
+
 	rc = of_property_read_u32(np, "focaltech,family-id", &temp_val);
 	if (!rc)
 		pdata->family_id = temp_val;
@@ -2447,11 +2464,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 
 	ft5x06_update_fw_ver(data);
 	ft5x06_update_fw_vendor_id(data);
-#ifdef SUPPORT_READ_TP_VERSION
-	memset(tp_version, 0, sizeof(tp_version));
-	sprintf(tp_version, "[FW]0x%x,[IC]FT6306",data->fw_ver[0]);
-	init_tp_fm_info(0,tp_version,"Boyi");
-#endif
+
 	FT_STORE_TS_INFO(data->ts_info, data->family_id, data->pdata->name,
 			data->pdata->num_max_touches, data->pdata->group_id,
 			data->pdata->fw_vkey_support ? "yes" : "no",
@@ -2459,6 +2472,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 			data->fw_ver[1], data->fw_ver[2]);
 
 #if defined(CONFIG_FB)
+	INIT_WORK(&data->fb_notify_work, fb_notify_resume_work);
 	data->fb_notif.notifier_call = fb_notifier_callback;
 
 	err = fb_register_client(&data->fb_notif);

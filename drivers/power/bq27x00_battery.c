@@ -24,6 +24,7 @@
  * http://focus.ti.com/docs/prod/folders/print/bq27500.html
  * http://www.ti.com/product/bq27425-g1
  */
+
 #include <linux/module.h>
 #include <linux/param.h>
 #include <linux/jiffies.h>
@@ -194,13 +195,13 @@ static int bq27x00_battery_read_rsoc(struct bq27x00_device_info *di)
 {
 	int rsoc;
 
-	if (di->chip == BQ27500){
+	if (di->chip == BQ27500)
 		rsoc = bq27x00_read(di, BQ27500_REG_SOC, false);
-	}else if (di->chip == BQ27425)
+	else if (di->chip == BQ27425)
 		rsoc = bq27x00_read(di, BQ27425_REG_SOC, false);
 	else
 		rsoc = bq27x00_read(di, BQ27000_REG_RSOC, true);
-    pr_debug("%s:rsoc = %d\n",__func__,rsoc);
+
 	if (rsoc < 0)
 		dev_dbg(di->dev, "error reading relative State-of-Charge\n");
 
@@ -422,10 +423,9 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 
 	cache.flags = bq27x00_read(di, BQ27x00_REG_FLAGS, !is_bq27500);
 	if (cache.flags >= 0) {
-        pr_debug("%s:enter cache.flags >= 0",__func__);
 		if (!is_bq27500 && !is_bq27425
 				&& (cache.flags & BQ27000_FLAG_CI)) {
-			pr_debug("%s:battery is not calibrated! ignoring capacity values\n",__func__);
+			dev_info(di->dev, "battery is not calibrated! ignoring capacity values\n");
 			cache.capacity = -ENODATA;
 			cache.energy = -ENODATA;
 			cache.time_to_empty = -ENODATA;
@@ -459,11 +459,8 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 		/* We only have to read charge design full once */
 		if (di->charge_design_full <= 0)
 			di->charge_design_full = bq27x00_battery_read_ilmd(di);
-	}else{
-        pr_debug("%s:cache.flags = %d,cache.capacity = %d\n",__func__,cache.flags,cache.capacity);
-        return;
 	}
-    
+
 	if (memcmp(&di->cache, &cache, sizeof(cache)) != 0) {
 		di->cache = cache;
 		power_supply_changed(&di->bat);
@@ -476,12 +473,12 @@ static void bq27x00_battery_poll(struct work_struct *work)
 {
 	struct bq27x00_device_info *di =
 		container_of(work, struct bq27x00_device_info, work.work);
+
 	bq27x00_update(di);
 
 	if (poll_interval > 0) {
 		/* The timer does not have to be accurate. */
 		set_timer_slack(&di->work.timer, poll_interval * HZ / 4);
-        pr_debug("%s:before schedule_delayed_work(&di->work, poll_interval * HZ)\n",__func__);
 		schedule_delayed_work(&di->work, poll_interval * HZ);
 	}
 }
@@ -617,10 +614,9 @@ static int bq27x00_battery_get_property(struct power_supply *psy,
 {
 	int ret = 0;
 	struct bq27x00_device_info *di = to_bq27x00_device_info(psy);
- 
+
 	mutex_lock(&di->lock);
 	if (time_is_before_jiffies(di->last_update + 5 * HZ)) {
-        pr_debug("%s:before bq27x00_battery_poll(&di->work.work)\n",__func__);
 		cancel_delayed_work_sync(&di->work);
 		bq27x00_battery_poll(&di->work.work);
 	}
@@ -696,9 +692,8 @@ static int bq27x00_battery_get_property(struct power_supply *psy,
 static void bq27x00_external_power_changed(struct power_supply *psy)
 {
 	struct bq27x00_device_info *di = to_bq27x00_device_info(psy);
-    
+
 	cancel_delayed_work_sync(&di->work);
-    pr_debug("%s:before schedule_delayed_work(&di->work, 0)\n",__func__);
 	schedule_delayed_work(&di->work, 0);
 }
 
@@ -742,7 +737,7 @@ static void bq27x00_powersupply_unregister(struct bq27x00_device_info *di)
 	 * schedule_delayed_work again after unregister (which cause OOPS).
 	 */
 	poll_interval = 0;
-    pr_debug("%s:before cancel_delayed_work_sync(&di->work)\n",__func__);
+
 	cancel_delayed_work_sync(&di->work);
 
 	power_supply_unregister(&di->bat);
@@ -881,7 +876,7 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 		dev_err(&client->dev, "Unable to register fb_notifier: %d\n",
 			retval);
     #endif
-    pr_warn( "\n%s:fuel guage probe sucess\n",__func__);
+
 	return 0;
 
 batt_failed_3:
