@@ -73,17 +73,18 @@ obj-$(CONFIG_SENSORS_CAPELLA_CM36283)	+= cm36283.o
 obj-$(CONFIG_SENSORS_MPU6050)		+= mpu6050.o
 obj-$(CONFIG_SENSORS_AKM8963)		+= akm8963.o
 obj-$(CONFIG_SENSORS_AKM09911)		+= akm09911.o
-obj-$(CONFIG_SENSORS_ST480)		+= st480.o
 obj-$(CONFIG_SENSORS_LIS3DH)		+= lis3dh_acc.o
 obj-$(CONFIG_SENSORS_AP3426)		+= ap3426.o
-obj-$(CONFIG_SENSORS_EPL2102)		+= elan_epl2182_ps_dyn.o
-obj-$(CONFIG_HALL)			+= hall.o
-obj-$(CONFIG_HEADSET_EUO_US_SWITCH)	+= ts3a225e.o
-obj-$(CONFIG_SWITCH_CAMERA)		+= switch_camera.o
 obj-$(CONFIG_SENSORS_BMA2X2)		+= bstclass.o
 
 obj-$(CONFIG_SENSORS_BMA2X2)	+= bma2x2.o
 obj-$(CONFIG_SENSORS_LTR553)	+= ltr553.o
+
+obj-$(CONFIG_HALL)			+= hall.o
+obj-$(CONFIG_SWITCH_CAMERA)		+= switch_camera.o
+obj-$(CONFIG_HEADSET_EUO_US_SWITCH)	+= ts3a225e.o
+obj-$(CONFIG_SENSORS_ST480)		+= st480.o
+obj-$(CONFIG_SENSORS_EPL2102)		+= elan_epl2182_ps_dyn.o
 
 ifeq ($(CONFIG_SENSORS_BMA2X2_ENABLE_INT1),y)
 	EXTRA_CFLAGS += -DBMA2X2_ENABLE_INT1

@@ -88,16 +88,6 @@ config TOUCHSCREEN_AD7879_SPI
 	  To compile this driver as a module, choose M here: the
 	  module will be called ad7879-spi.
 
-config TOUCHSCREEN_HIDEEP
-	tristate "Hideep I2C Touchscreen"
-	depends on I2C
-	help
-	  Say Y here if you have hideep series I2C touchscreen,
-	  such as ist7xx, connected to your system.
-	  If unsure, say N.
-	  To compile this driver as a module, choose M here: the
-	  module will be called hideep_ts.
-
 config TOUCHSCREEN_ATMEL_MXT
 	tristate "Atmel mXT I2C Touchscreen"
 	depends on I2C
@@ -271,6 +261,17 @@ config TOUCHSCREEN_FUJITSU
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called fujitsu-ts.
+	  
+config TOUCHSCREEN_HIDEEP
+	tristate "HiDeep Touch IC"
+	depends on I2C
+	help
+	  Say Y here if you have a touchscreen using HiDeep.
+
+	  If unsure, say N.
+
+	  To compile this driver as a moudle, choose M here : the
+	  module will be called hideep_ts.
 
 config TOUCHSCREEN_ILI210X
 	tristate "Ilitek ILI210X based touchscreen"

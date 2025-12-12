@@ -15,26 +15,50 @@
 #include "msm_cci.h"
 #include "msm_camera_io_util.h"
 #include "msm_camera_i2c_mux.h"
+#include <linux/gpio.h>
+#include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/regulator/rpm-smd-regulator.h>
 #include <linux/regulator/consumer.h>
 
+int camera_rotation = 0;
+EXPORT_SYMBOL(camera_rotation);
+static struct msm_sensor_ctrl_t *bamboo_s_ctrl = NULL;
+
+void bamboo_force_sensor_rotation(int mode) {
+	int rc = 0;
+	struct msm_camera_i2c_reg_array reg_conf[1];
+	struct msm_camera_i2c_reg_setting setting;
+
+	if (!bamboo_s_ctrl) {
+		pr_err("BAMBOO_ERR: Sensor aun no inicializado!\n");
+		return;
+	}
+
+	reg_conf[0].reg_addr = 0x3820;
+	reg_conf[0].reg_data = (mode == 1) ? 0x00 : 0x06; // 1=Front(00), 0=Back(06)
+	reg_conf[0].delay = 0;
+
+	setting.reg_setting = reg_conf;
+	setting.size = 1;
+	setting.addr_type = MSM_CAMERA_I2C_WORD_ADDR; // Dirección de 16 bits
+	setting.data_type = MSM_CAMERA_I2C_BYTE_DATA; // Dato de 8 bits
+	setting.delay = 0;
+
+	rc = bamboo_s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write_table(
+		bamboo_s_ctrl->sensor_i2c_client, &setting);
+
+	if (rc < 0) {
+		pr_err("BAMBOO_ERR: Fallo al actualizar rotacion en vivo (%d)\n", rc);
+	} else {
+		pr_info("BAMBOO_LIVE: Rotacion actualizada en vivo a %s (0x%02x)\n", 
+		(mode == 1) ? "SELFIE" : "TRASERA", reg_conf[0].reg_data);
+	}
+}
+EXPORT_SYMBOL(bamboo_force_sensor_rotation);
+
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
-
-#ifdef CONFIG_SWITCH_CAMERA
-extern int irq_flag;
-extern int is_panorma;
-extern int switch_camera_suspend(void);
-extern int switch_camera_resume(void);
-extern int get_gpio_state(void);
-extern int otp_vendor_id;
-int poweer_down_camera_state=0;
-int power_up_flag=0;
-int start_flag=0;
-void write_front_register(void);
-void write_back_register(void);
-struct msm_sensor_ctrl_t *s_ctrl_1;
-#endif
 
 static struct v4l2_file_operations msm_sensor_v4l2_subdev_fops;
 static void msm_sensor_adjust_mclk(struct msm_camera_power_ctrl_t *ctrl)
@@ -458,7 +482,8 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 	struct msm_camera_slave_info *slave_info;
 	const char *sensor_name;
 	uint32_t retry = 0;
-
+	bamboo_s_ctrl = s_ctrl;
+	
 	if (!s_ctrl) {
 		pr_err("%s:%d failed: %p\n",
 			__func__, __LINE__, s_ctrl);
@@ -729,7 +754,7 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			rc = -EFAULT;
 			break;
 		}
-
+		
 		conf_array.reg_setting = reg_setting;
 
 		rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->
@@ -953,60 +978,15 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 }
 #endif
 
-#ifdef CONFIG_SWITCH_CAMERA
-
-static struct msm_camera_i2c_reg_array reg_setting_1[] = {  
-{0x3820, 0x06},};
-static struct msm_camera_i2c_reg_array reg_setting_2[] = { 
-{0x3820, 0x00},};//front
-struct msm_camera_i2c_reg_setting conf_array_1 = {	
-	.reg_setting=reg_setting_1,	
-	.size= 1,   // 10	
-	.addr_type= 2,	
-	.data_type= 1,	
-	.delay= 0 ,
-};
-
-void write_back_register(void)
-{    
-	struct msm_sensor_ctrl_t *s_ctrl_1_1=s_ctrl_1;	//	irq_flag=0;//back			
-	conf_array_1.reg_setting=reg_setting_1;		
-	s_ctrl_1_1->sensor_i2c_client->i2c_func_tbl->i2c_write_table(s_ctrl_1_1->sensor_i2c_client, &conf_array_1);	
-}
-void write_front_register(void)
-{    
-	struct msm_sensor_ctrl_t *s_ctrl_1_1=s_ctrl_1;//	irq_flag=1;//front	
-	conf_array_1.reg_setting=reg_setting_2;		
-	s_ctrl_1_1->sensor_i2c_client->i2c_func_tbl->i2c_write_table(s_ctrl_1_1->sensor_i2c_client, &conf_array_1);		
-}
-
-void write_register_panorma(void)
-{
-	struct msm_sensor_ctrl_t *s_ctrl_1_1=s_ctrl_1;
-
-		 conf_array_1.reg_setting=reg_setting_1;
-		s_ctrl_1_1->sensor_i2c_client->i2c_func_tbl->i2c_write_table(
-			s_ctrl_1_1->sensor_i2c_client, &conf_array_1);
-	
-}
-void write_register_no_panorma(void)
-{
-	struct msm_sensor_ctrl_t *s_ctrl_1_1=s_ctrl_1;
-
-		 conf_array_1.reg_setting=reg_setting_2;
-		s_ctrl_1_1->sensor_i2c_client->i2c_func_tbl->i2c_write_table(
-			s_ctrl_1_1->sensor_i2c_client, &conf_array_1);
-	
-}
-
-#endif
-
 int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 {
 	struct sensorb_cfg_data *cdata = (struct sensorb_cfg_data *)argp;
 	int32_t rc = 0;
 	int32_t i = 0;
+	int k;
+	int current_mode = camera_rotation;
 	mutex_lock(s_ctrl->msm_sensor_mutex);
+	pr_info("BAMBOO_DEBUG: Entrando a msm_sensor_config. Tipo de comando: %d\n", cdata->cfgtype);
 	CDBG("%s:%d %s cfgtype = %d\n", __func__, __LINE__,
 		s_ctrl->sensordata->sensor_name, cdata->cfgtype);
 	switch (cdata->cfgtype) {
@@ -1099,23 +1079,23 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			rc = -EFAULT;
 			break;
 		}
-		#ifdef CONFIG_SWITCH_CAMERA
-		
-		/* change image direction when open camera first  start
-		if(irq_flag==0&&(reg_setting[173].reg_addr==0x3820))
-		{	reg_setting[173].reg_data=0x06;
-            printk("wusheng 6-12-1");
-			}
-		*/
-		
-		if(get_gpio_state()==1&&(reg_setting[173].reg_addr==0x3820))
-			{reg_setting[173].reg_data=0x00;	
-			printk("wusheng 6-12-2");
-			}
-		
-		/* change image direction when open camera first  end*/
-		#endif
+
 		conf_array.reg_setting = reg_setting;
+			
+		for (k = 0; k < conf_array.size; k++) {
+			if (reg_setting[k].reg_addr == 0x3820) {
+				pr_info("BAMBOO_BRIDGE: [ARRAY] Modo detectado=%d (0=Back, 1=Front)\n", current_mode);
+
+				if (current_mode == 1) { // Frontal / Selfie
+					reg_setting[k].reg_data = 0x00; 
+					pr_info("BAMBOO_BRIDGE: [ARRAY] -> Aplicando SELFIE (0x00)\n");
+				} else { // Trasera / Normal
+					reg_setting[k].reg_data = 0x06; 
+					pr_info("BAMBOO_BRIDGE: [ARRAY] -> Aplicando TRASERA (0x06)\n");
+				}
+			}
+		}
+				
 		rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write_table(
 			s_ctrl->sensor_i2c_client, &conf_array);
 		kfree(reg_setting);
@@ -1253,7 +1233,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 	case CFG_WRITE_I2C_SEQ_ARRAY: {
 		struct msm_camera_i2c_seq_reg_setting conf_array;
 		struct msm_camera_i2c_seq_reg_array *reg_setting = NULL;
-
+		int l;
 		if (s_ctrl->sensor_state != MSM_SENSOR_POWER_UP) {
 			pr_err("%s:%d failed: invalid state %d\n", __func__,
 				__LINE__, s_ctrl->sensor_state);
@@ -1294,6 +1274,21 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 		}
 
 		conf_array.reg_setting = reg_setting;
+		
+		for (l = 0; l < conf_array.size; l++) {
+			if (reg_setting[l].reg_addr == 0x3820) {
+				pr_info("BAMBOO_BRIDGE: [SEQ] Modo detectado=%d (0=Back, 1=Front)\n", current_mode);
+
+				if (current_mode == 1) { 
+					reg_setting[l].reg_data[0] = 0x00; // SELFIE
+					pr_info("BAMBOO_BRIDGE: [SEQ] -> Aplicando SELFIE (0x00)\n");
+				} else { 
+					reg_setting[l].reg_data[0] = 0x06; // TRASERA
+					pr_info("BAMBOO_BRIDGE: [SEQ] -> Aplicando TRASERA (0x06)\n");
+				}
+			}
+		}
+		
 		rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->
 			i2c_write_seq_table(s_ctrl->sensor_i2c_client,
 			&conf_array);
@@ -1782,10 +1777,7 @@ int32_t msm_sensor_init_default_params(struct msm_sensor_ctrl_t *s_ctrl)
 	mount_pos = mount_pos | ((s_ctrl->sensordata->sensor_info->
 					sensor_mount_angle / 90) << 8);
 	s_ctrl->msm_sd.sd.entity.flags = mount_pos | MEDIA_ENT_FL_DEFAULT;
-	#ifdef CONFIG_SWITCH_CAMERA
-	s_ctrl_1=s_ctrl;//intiallize s_ctrl_1
-	start_flag=1;//delay write_register()function
-	#endif
+
 	return 0;
 
 FREE_CCI_CLIENT:

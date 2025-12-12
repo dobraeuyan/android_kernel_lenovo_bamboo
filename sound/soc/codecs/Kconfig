@@ -143,14 +143,7 @@ config SND_SOC_ARIZONA
 	default y if SND_SOC_WM5110=y
 	default m if SND_SOC_WM5102=m
 	default m if SND_SOC_WM5110=m
-	
-config SND_SOC_AW8738
-    tristate "Awinic AW8738/AW8736 Audio Amplifier"
-    select GPIOLIB
-    help
-      Enable support for the Awinic AW8738/AW8736 audio amplifier.
-      This driver controls the amplifier via one-wire pulse on a GPIO pin.
-      
+
 config SND_SOC_WM_HUBS
 	tristate
 	default y if SND_SOC_WM8993=y || SND_SOC_WM8994=y

@@ -30,6 +30,7 @@
 #include <sound/jack.h>
 #include "wcd-mbhc-v2.h"
 #include "wcdcal-hwdep.h"
+#include <linux/ts3a225e.h>
 
 #define WCD_MBHC_JACK_MASK (SND_JACK_HEADSET | SND_JACK_OC_HPHL | \
 			   SND_JACK_OC_HPHR | SND_JACK_LINEOUT | \
@@ -950,6 +951,8 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	enum wcd_mbhc_plug_type plug_type = MBHC_PLUG_TYPE_INVALID;
 	unsigned long timeout;
 	u16 hs_comp_res, hphl_sch, mic_sch, btn_result;
+	u8 ts3a225e_reg[7] = {0};
+	u8 regs[7] = {0};
 	bool wrk_complete = false;
 	int pt_gnd_mic_swap_cnt = 0;
 	int no_gnd_mic_swap_cnt = 0;
@@ -971,9 +974,43 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	 * is handled with ref-counts by individual codec drivers, there is
 	 * no need to enabale micbias/pullup here
 	 */
-
 	wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
 
+	pr_info("Lenovo Audio: Starting TS3A225E detection...\n");
+
+	ts3a225e_write_byte(TS3A_REG_CTRL3, TS3A_CTRL3_TRIGGER);
+
+	/* Wait for detection */
+	msleep(500);
+
+	ts3a225e_read_byte(TS3A_REG_DAT1, &regs[TS3A_REG_DAT1]);
+	ts3a225e_read_byte(TS3A_REG_INT, &regs[TS3A_REG_INT]);
+
+	pr_info("Lenovo Audio: TS3A Status -> INT=0x%02x, DAT1=0x%02x\n",
+		regs[TS3A_REG_INT], regs[TS3A_REG_DAT1]);
+
+	if (regs[TS3A_REG_INT] & TS3A_INT_STD_TSR) {
+		pr_info("Lenovo Audio: 3-Pole Headphones detected. Forcing Manual Super-Ground.\n");
+		plug_type = MBHC_PLUG_TYPE_HEADPHONE;
+		ts3a225e_write_byte(TS3A_REG_CTRL1, TS3A_CTRL1_SET_MANUAL);
+		ts3a225e_write_byte(TS3A_REG_CTRL2, TS3A_CTRL2_ALL_ON);
+		goto report;
+
+	} else if (regs[TS3A_REG_INT] & TS3A_INT_MIC_PRESENT) {
+		plug_type = MBHC_PLUG_TYPE_HEADSET;
+		if (regs[TS3A_REG_DAT1] & TS3A_DAT1_GND_LOC)
+			pr_info("Lenovo Audio: 4-Pole OMTP Headset detected (GND on Sleeve).\n");
+		else
+			pr_info("Lenovo Audio: 4-Pole CTIA/Standard Headset detected (GND on Ring2).\n");
+
+		ts3a225e_read_byte(0x05, &regs[4]);
+		if ((regs[4] & 0x07) == 0x07 || (regs[4] & 0x38) == 0x38)
+			wcd_is_special_headset(mbhc);
+
+		goto report;
+	}
+
+	pr_info("Lenovo Audio: No valid jack detected by TS3A. Fallback to PMIC.\n");
 
 	if (mbhc->current_plug == MBHC_PLUG_TYPE_GND_MIC_SWAP) {
 		mbhc->current_plug = MBHC_PLUG_TYPE_NONE;
@@ -993,14 +1030,60 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	WCD_MBHC_REG_READ(WCD_MBHC_HS_COMP_RESULT, hs_comp_res);
 
 	if (!rc) {
-		pr_debug("%s No btn press interrupt\n", __func__);
-		if (!btn_result && !hs_comp_res)
+		pr_debug("%s No btn press interrupt - Starting TS3A225E detection\n",
+			 __func__);
+
+		/* 1. Start detection on TI chip */
+		ts3a225e_write_byte(0x04, 0x01); /* Trigger detection sequence */
+		msleep(500); /* Wait for chip processing (Lenovo uses 500ms) */
+
+		/* 2. Read results */
+		ts3a225e_read_byte(0x02, &ts3a225e_reg[1]);
+		ts3a225e_read_byte(0x03, &ts3a225e_reg[2]);
+		ts3a225e_read_byte(0x05, &ts3a225e_reg[4]);
+		ts3a225e_read_byte(0x06, &ts3a225e_reg[5]);
+
+		pr_info("Lenovo TS3A: Regs 02=%x 03=%x 05=%x 06=%x\n",
+			ts3a225e_reg[1], ts3a225e_reg[2],
+			ts3a225e_reg[4], ts3a225e_reg[5]);
+
+		/* 3. Interpret result (Reg 0x06 indicates type) */
+		if (ts3a225e_reg[5] == 0x01) {
+			/* 3-Pole: Headphones */
+			pr_info("Lenovo TS3A: Detected HEADPHONE (3-pole)\n");
+			plug_type = MBHC_PLUG_TYPE_HEADPHONE;
+
+			/* Configure chip for correct routing (Ground/Mic) */
+			ts3a225e_write_byte(0x02, 0x07);
+			ts3a225e_write_byte(0x03, 0xf3);
+
+		} else if (ts3a225e_reg[5] == 0x02) {
+			/* 4-Pole: Headset (with Mic) */
+			pr_info("Lenovo TS3A: Detected HEADSET (4-pole)\n");
 			plug_type = MBHC_PLUG_TYPE_HEADSET;
-		else if (!btn_result && hs_comp_res)
-			plug_type = MBHC_PLUG_TYPE_HIGH_HPH;
-		else
-			plug_type = MBHC_PLUG_TYPE_INVALID;
+
+			/* Detect special headsets (OMTP/CTIA auto by chip) */
+			if ((ts3a225e_reg[4] & 0x07) == 0x07 ||
+			    (ts3a225e_reg[4] & 0x38) == 0x38) {
+				wcd_is_special_headset(mbhc);
+				pr_info("Lenovo TS3A: Special headset detected\n");
+			}
+		} else {
+			/* Failure or Qualcomm native fallback */
+			pr_err("Lenovo TS3A: Detection failed or unknown (Reg 06=%x). Fallback to standard.\n",
+			       ts3a225e_reg[5]);
+
+			/* Fallback to original Qualcomm logic */
+			if (!btn_result && !hs_comp_res)
+				plug_type = MBHC_PLUG_TYPE_HEADSET;
+			else if (!btn_result && hs_comp_res)
+				/* Previously fell through as LineOut here */
+				plug_type = MBHC_PLUG_TYPE_HIGH_HPH;
+			else
+				plug_type = MBHC_PLUG_TYPE_INVALID;
+		}
 	} else {
+		/* Original logic for timeout/button press on insertion */
 		if (!btn_result && !hs_comp_res)
 			plug_type = MBHC_PLUG_TYPE_HEADPHONE;
 		else

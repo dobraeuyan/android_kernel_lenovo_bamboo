@@ -105,6 +105,7 @@ int ts3a225e_read_byte(uint8_t reg_addr, uint8_t *data)
     mutex_unlock(&ts3a225e_i2c_access);    
     return 0;
 }
+EXPORT_SYMBOL(ts3a225e_read_byte);
 
 int ts3a225e_write_byte(uint8_t reg_addr, uint8_t data)
 {
@@ -144,6 +145,7 @@ int ts3a225e_write_byte(uint8_t reg_addr, uint8_t data)
     mutex_unlock(&ts3a225e_i2c_access);
     return 0;
 }
+EXPORT_SYMBOL(ts3a225e_write_byte);
 
 /******************************************************************************
  * extern functions
@@ -185,4 +187,3 @@ module_exit(ts3a225e_exit);
 MODULE_AUTHOR("Dexiang Liu");
 MODULE_DESCRIPTION("TS3A225E driver");
 MODULE_LICENSE("GPL");
-

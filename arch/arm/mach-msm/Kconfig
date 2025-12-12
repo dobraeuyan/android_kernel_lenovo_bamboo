@@ -1070,5 +1070,17 @@ config FSM9900_GSM_NL
 	  The DIQ functionality is disabled and the UART functionality is enabled.
 	  The serial port connection can be established to communicate with the
 	  GSM NL module.
+	  
+config SPEAKER_EXT_PA
+    default n
+    bool "Speaker external PA"
+    help
+        Support for external PA.
+
+config SPEAKER_EXT_PA_AW8736
+    default n
+    bool "Speaker external PA AW8736"
+    help
+        Support for the AW8736.
 
 endif

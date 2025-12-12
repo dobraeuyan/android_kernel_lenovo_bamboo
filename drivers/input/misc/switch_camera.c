@@ -26,17 +26,13 @@
 #define KEY_CAM_SWITCH_CLOSE 0x257
 
 int irq_function_irq=0;
-extern void write_front_register(void);
-extern void write_back_register(void);
-
-extern void write_register_panorma(void);
-extern void write_register_no_panorma(void);
 int get_gpio_state(void);
-
-extern int start_flag;
-extern int poweer_down_camera_state;
+int start_flag = 0;
+int poweer_down_camera_state = -1;
 static struct timer_list s_timer;
 //?¡§šº¡À?¡Â?š¢11š¬?
+extern void bamboo_force_sensor_rotation(int mode);
+extern int camera_rotation;
 
 struct switch_camera_irq
 {
@@ -101,12 +97,12 @@ static ssize_t camera_attr_show(struct device *dev,struct device_attribute *attr
 static ssize_t camera_attr_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t count)   
 {
 	unsigned int input;
-	printk("camera_attr_store: start.....................\n");
+	printk("BAMBOO_DEBUG: camera_attr_store: start.....................\n");
 	if (sscanf(buf, "%u", &input) != 1) { 
 		return -EINVAL;
 	}
 
-	printk("camera_attr_store:  end.....................\n");   
+	printk("BAMBOO_DEBUG: camera_attr_store:  end.....................\n");   
 	return 1;
 }
 
@@ -130,7 +126,7 @@ static ssize_t panorma_attr_show(struct device *dev,struct device_attribute *att
 {                                       
 	snprintf(buf, 8, "%s\n",panorma_strs); 
 	is_panorma=1;  
-	printk("wusheng panorma\n");
+	printk("BAMBOO_DEBUG: wusheng panorma\n");
 	return strlen(buf)+1;        
 }       
 
@@ -151,7 +147,7 @@ static ssize_t no_panorma_attr_show(struct device *dev,struct device_attribute *
 {                                       
 	snprintf(buf, 11, "%s\n",no_panorma_strs); 
 	is_panorma=0;   
-	printk("wusheng no panorma\n");
+	printk("BAMBOO_DEBUG: wusheng no panorma\n");
 	return strlen(buf)+1;        
 }       
 
@@ -159,28 +155,26 @@ static ssize_t no_panorma_attr_show(struct device *dev,struct device_attribute *
 
 void switch_camera_do_work_back(struct work_struct *work_1)
 {
-	if(start_flag==1)
-		write_back_register();
+	bamboo_force_sensor_rotation(0);
 }
 void switch_camera_do_work_front(struct work_struct *work_1)
 {
-	if(start_flag==1)
-		write_front_register();
+	bamboo_force_sensor_rotation(1);
 }
 
 void switch_camera_panorma_do_work(struct work_struct *work_1)
 {
-	if(start_flag==1)
-		write_register_panorma();
+	//if(start_flag==1)
+		//write_register_panorma();
 
 }
 static void second_timer_handle(unsigned long arg)
 {
 
 	if(first_flag == 0)
-		CDBG(" [first]-----second_timer_handle\n");
+		CDBG("BAMBOO_DEBUG:  [first]-----second_timer_handle\n");
 	else
-		CDBG(" -----second_timer_handle\n");
+		CDBG("BAMBOO_DEBUG:  -----second_timer_handle\n");
 
 
 	//**************************first_flag: start ***************************************
@@ -188,10 +182,10 @@ static void second_timer_handle(unsigned long arg)
 	{
 		first_flag = 1;
 		switch_camera_gpio_ctl1 = gpio_get_value(switch_camera_info->out_pin.gpio);
-		CDBG(" [first]:gpio_28 = %d\n",  switch_camera_gpio_ctl1);
+		CDBG("BAMBOO_DEBUG:  [first]:gpio_28 = %d\n",  switch_camera_gpio_ctl1);
 
 		switch_camera_gpio_ctl2 = gpio_get_value(switch_camera_info->mvout_pin.gpio);
-		CDBG(" [first]:gpio_97 = %d\n",   switch_camera_gpio_ctl2);
+		CDBG("BAMBOO_DEBUG:  [first]:gpio_97 = %d\n",   switch_camera_gpio_ctl2);
 
 
 		if(switch_camera_gpio_ctl1 ==1 && switch_camera_gpio_ctl2==1)
@@ -200,7 +194,7 @@ static void second_timer_handle(unsigned long arg)
 			switch_camera_timer_flag=1;
 
 			switch_camera_gpio_flag=1;
-			CDBG(" [first]-----input front camera\n");
+			CDBG("BAMBOO_DEBUG:  [first]-----input front camera\n");
 
 		}
 		else if(switch_camera_gpio_ctl1 ==0 ||switch_camera_gpio_ctl2==0)
@@ -209,7 +203,7 @@ static void second_timer_handle(unsigned long arg)
 			switch_camera_timer_flag=0;
 
 			//	switch_camera_gpio_flag=0;//Áœžögpio¶ŒÀ­µÍ
-			CDBG(" [first]-----input back camera\n");
+			CDBG("BAMBOO_DEBUG:  [first]-----input back camera\n");
 		}
 
 	}
@@ -220,7 +214,7 @@ static void second_timer_handle(unsigned long arg)
 
 		if(switch_camera_gpio_ctl1 ==switch_camera_gpio_flag ||switch_camera_gpio_ctl2==switch_camera_gpio_flag)
 		{
-			CDBG(" -----***********************************:%d\n",switch_camera_gpio_flag);
+			CDBG("BAMBOO_DEBUG:  -----***********************************:%d\n",switch_camera_gpio_flag);
 
 
 
@@ -232,7 +226,8 @@ static void second_timer_handle(unsigned long arg)
 			{
 				if(switch_camera_gpio_flag==0)
 				{	
-					CDBG(" -----back camera module\n");
+					camera_rotation = 0; // Back
+					CDBG("BAMBOO_DEBUG:  -----back camera module\n");
 					sysfs_flag=0;
 
 
@@ -242,7 +237,7 @@ static void second_timer_handle(unsigned long arg)
 						input_report_key(switch_camera_info->ipdev, KEY_CAM_SWITCH_OPEN, 1);      
 						input_report_key(switch_camera_info->ipdev, KEY_CAM_SWITCH_OPEN, 0);
 						input_sync(switch_camera_info->ipdev);
-						CDBG(" -----input_report_key back camera event\n");
+						CDBG("BAMBOO_DEBUG:  -----input_report_key back camera event\n");
 
 						schedule_work(&switch_camera_wq_back);				
 
@@ -252,7 +247,8 @@ static void second_timer_handle(unsigned long arg)
 				}
 				else
 				{
-					CDBG(" -----front camera module\n");
+					camera_rotation = 1;
+					CDBG("BAMBOO_DEBUG:  -----front camera module\n");
 
 					sysfs_flag=1;
 
@@ -263,7 +259,7 @@ static void second_timer_handle(unsigned long arg)
 						input_report_key(switch_camera_info->ipdev, KEY_CAM_SWITCH_CLOSE, 1);
 						input_report_key(switch_camera_info->ipdev, KEY_CAM_SWITCH_CLOSE, 0); 
 						input_sync(switch_camera_info->ipdev);
-						CDBG(" -----input_report_key front camera event\n");
+						CDBG("BAMBOO_DEBUG:  -----input_report_key front camera event\n");
 
 						schedule_work(&switch_camera_wq_front);
 					}
@@ -276,7 +272,7 @@ static void second_timer_handle(unsigned long arg)
 	{
 		if(switch_camera_gpio_ctl1 ==switch_camera_gpio_flag ||switch_camera_gpio_ctl2==switch_camera_gpio_flag)
 		{
-			CDBG(" -----***********************************:%d\n",switch_camera_gpio_flag);
+			CDBG("BAMBOO_DEBUG:  -----***********************************:%d\n",switch_camera_gpio_flag);
 			if(switch_camera_gpio_flag==0)
 			{	
 				sysfs_flag=0;		//back
@@ -310,13 +306,13 @@ static irqreturn_t switch_camera_interrupt(int irq, void *data)
 		disable_irq_nosync(switch_camera_info->mvout_pin.irq);	
 	//disable_irq_nosync(irq);
 	irq_function_irq=1;
-	CDBG("\n\n :switch_camera_interrupt  start...\n");
+	CDBG("BAMBOO_DEBUG: \n\n :switch_camera_interrupt  start...\n");
 
 	switch_camera_gpio_ctl1 = gpio_get_value(switch_camera_info->out_pin.gpio);
-	CDBG(" :gpio_28 = %d\n",  switch_camera_gpio_ctl1);
+	CDBG("BAMBOO_DEBUG:  :gpio_28 = %d\n",  switch_camera_gpio_ctl1);
 
 	switch_camera_gpio_ctl2 = gpio_get_value(switch_camera_info->mvout_pin.gpio);
-	CDBG(" :gpio_97 = %d\n",   switch_camera_gpio_ctl2);
+	CDBG("BAMBOO_DEBUG:  :gpio_97 = %d\n",   switch_camera_gpio_ctl2);
 
 	if(switch_camera_gpio_ctl1 ==1 && switch_camera_gpio_ctl2==1)
 	{
@@ -327,7 +323,7 @@ static irqreturn_t switch_camera_interrupt(int irq, void *data)
 		switch_camera_interrupt_flag=0;
 	}
 
-	CDBG(" -----****************************open timer\n");
+	CDBG("BAMBOO_DEBUG:  -----****************************open timer\n");
 	switch_camera_gpio_flag=switch_camera_interrupt_flag;
 	mod_timer(&s_timer,jiffies + 20);  //mod_timer(struct timer_list *timer, unsigned long expires)
 
@@ -344,17 +340,17 @@ static int switch_camera_init_irq(struct switch_camera_irq *switch_camera)
 	if (gpio_is_valid(data->gpio)) {
 		rc = gpio_request(data->gpio, switch_camera->irq_name);
 		if (rc < 0) {
-			pr_err("switch_camera_probe: gpio_request fail rc=%d\n", rc);
+			pr_err("BAMBOO_DEBUG: switch_camera_probe: gpio_request fail rc=%d\n", rc);
 			return rc ;
 		}
 
 		rc = gpio_direction_input(data->gpio);
 		if (rc < 0) {
-			pr_err("switch_camera_probe: gpio_direction_input fail rc=%d\n", rc);
+			pr_err("BAMBOO_DEBUG: switch_camera_probe: gpio_direction_input fail rc=%d\n", rc);
 			return rc ;
 		}
 		data->state = gpio_get_value(data->gpio);
-		pr_info("%s:[%s] state = %d\n", __func__, switch_camera->irq_name, data->state);
+		pr_info("BAMBOO_DEBUG: %s:[%s] state = %d\n", __func__, switch_camera->irq_name, data->state);
 
 		data->irq = gpio_to_irq(data->gpio);
 
@@ -363,12 +359,12 @@ static int switch_camera_init_irq(struct switch_camera_irq *switch_camera)
 				IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING|IRQF_ONESHOT,
 				switch_camera->irq_name, data);
 		if (rc < 0) {
-			pr_err("switch_camera: request_irq fail rc=%d\n", rc);
+			pr_err("BAMBOO_DEBUG: switch_camera: request_irq fail rc=%d\n", rc);
 			return rc ;
 		}
 
 	}else{
-		pr_err("switch_camera irq gpio not provided\n");
+		pr_err("BAMBOO_DEBUG: switch_camera irq gpio not provided\n");
 		return rc ;
 	}
 	return 0;
@@ -383,7 +379,7 @@ static int switch_camera_parse_dt(struct device *dev, struct switch_camera_info 
 	pdata->out_pin.gpio = of_get_named_gpio_flags(np, "switch_camera,irq-out",
 			0, &flags);
 	if (pdata->out_pin.gpio < 0) {
-		pr_err("switch_camera get out_pin gpio fail\n");
+		pr_err("BAMBOO_DEBUG: switch_camera get out_pin gpio fail\n");
 		return -EINVAL;
 	} else {
 		pdata->out_pin.irq_name = "switch_camera-out";
@@ -392,40 +388,40 @@ static int switch_camera_parse_dt(struct device *dev, struct switch_camera_info 
 	pdata->mvout_pin.gpio = of_get_named_gpio_flags(np, "switch_camera,irq-mvout",
 			0, &flags);
 	if (pdata->mvout_pin.gpio < 0) {
-		pr_err("switch_camera get mvout_pin gpio fail\n");
+		pr_err("BAMBOO_DEBUG: switch_camera get mvout_pin gpio fail\n");
 	} else {
 		pdata->mvout_pin.irq_name = "switch_camera-mvout";
 	}
 
 	pdata->pinctrl = devm_pinctrl_get(dev);
 	if (IS_ERR(pdata->pinctrl)) {
-		pr_err("%s: Unable to get pinctrl handle\n", __func__);
+		pr_err("BAMBOO_DEBUG: %s: Unable to get pinctrl handle\n", __func__);
 		return -EINVAL;
 	}
 	pdata->default_state = pinctrl_lookup_state(pdata->pinctrl, "default");
 	if (IS_ERR(pdata->default_state)) {
-		pr_err("%s: Unable to get pinctrl active handle\n", __func__);
+		pr_err("BAMBOO_DEBUG: %s: Unable to get pinctrl active handle\n", __func__);
 		return -EINVAL;
 	}
 	pdata->sleep_state = pinctrl_lookup_state(pdata->pinctrl, "sleep");
 	if (IS_ERR(pdata->sleep_state)) {
-		pr_err("%s: Unable to get pinctrl active handle\n", __func__);
+		pr_err("BAMBOO_DEBUG: %s: Unable to get pinctrl active handle\n", __func__);
 		return -EINVAL;
 	}
 
 	rc = pinctrl_select_state(pdata->pinctrl , pdata->default_state);
 	if (rc) {
-		pr_err("%s: pinctrl_select_state fail\n", __func__);
+		pr_err("BAMBOO_DEBUG: %s: pinctrl_select_state fail\n", __func__);
 	}
 
 	pdata->vdd = regulator_get(dev, "vdd");
 	if (IS_ERR(pdata->vdd)) {
 		rc = PTR_ERR(pdata->vdd);
-		pr_err("%s: Regulator get failed vdd rc=%d\n", __func__, rc);
+		pr_err("BAMBOO_DEBUG: %s: Regulator get failed vdd rc=%d\n", __func__, rc);
 		return rc;
 	}
 
-	pr_info("switch_camera_parse_dt success \n");
+	pr_info("BAMBOO_DEBUG: switch_camera_parse_dt success \n");
 	return 0;
 }
 static int switch_camera_power_supply_on(struct switch_camera_info *pdata)
@@ -436,16 +432,16 @@ static int switch_camera_power_supply_on(struct switch_camera_info *pdata)
 		rc = regulator_set_voltage(pdata->vdd,
 				1800000, 1800000);
 		if (rc) {
-			pr_err("%s: Regulator set failed vdd rc=%d\n",__func__, rc);
+			pr_err("BAMBOO_DEBUG: %s: Regulator set failed vdd rc=%d\n",__func__, rc);
 		}
 	}
 
 	rc = regulator_enable(pdata->vdd);
 	if (rc) {
-		pr_err("%s: Regulator vdd enable failed rc=%d\n", __func__, rc);
+		pr_err("BAMBOO_DEBUG: %s: Regulator vdd enable failed rc=%d\n", __func__, rc);
 	}
 
-	pr_info("%s success \n",__func__);
+	pr_info("BAMBOO_DEBUG: %s success \n",__func__);
 	return rc;
 }
 
@@ -497,7 +493,7 @@ static int switch_camera_probe(struct platform_device *pdev)
 	if (pdev->dev.of_node) {
 		switch_camera_info = kzalloc(sizeof(struct switch_camera_info), GFP_KERNEL);		  
 		if (!switch_camera_info) {
-			pr_err("%s: failed to alloc memory for module data\n",__func__);
+			pr_err("BAMBOO_DEBUG: %s: failed to alloc memory for module data\n",__func__);
 			return -ENOMEM;
 		}
 		err = switch_camera_parse_dt(&pdev->dev, switch_camera_info);
@@ -513,7 +509,7 @@ static int switch_camera_probe(struct platform_device *pdev)
 	/*input system config*/		
 	switch_camera_info->ipdev = input_allocate_device();		
 	if (!switch_camera_info->ipdev) {			
-		pr_err("switch_camera_probe: input_allocate_device fail\n");			
+		pr_err("BAMBOO_DEBUG: switch_camera_probe: input_allocate_device fail\n");			
 		goto input_error;		
 	}		
 	switch_camera_info->ipdev->name = "camera-switch-input";		
@@ -522,13 +518,13 @@ static int switch_camera_probe(struct platform_device *pdev)
 	set_bit(INPUT_PROP_NO_DUMMY_RELEASE, switch_camera_info->ipdev->propbit);		
 	rc = input_register_device(switch_camera_info->ipdev);		
 	if (rc) {			
-		pr_err("switch_camera_probe: input_register_device fail rc=%d\n", rc);			
+		pr_err("BAMBOO_DEBUG: switch_camera_probe: input_register_device fail rc=%d\n", rc);			
 		goto input_error;		
 	}
 
 	rc = switch_camera_power_supply_on(switch_camera_info);
 	if (rc) {
-		pr_err("switch_camera_probe: switch_camera_power_supply_on fail rc=%d\n", rc);
+		pr_err("BAMBOO_DEBUG: switch_camera_probe: switch_camera_power_supply_on fail rc=%d\n", rc);
 		goto input_error;
 	}
 	msleep(1);
@@ -541,7 +537,7 @@ static int switch_camera_probe(struct platform_device *pdev)
 		rc |= switch_camera_init_irq(&switch_camera_info->mvout_pin);
 
 	if (rc) {
-		pr_err("switch_camera_probe: switch_camera_init_irq fail rc=%d\n", rc);
+		pr_err("BAMBOO_DEBUG: switch_camera_probe: switch_camera_init_irq fail rc=%d\n", rc);
 		goto err_irq;
 	}
 
@@ -561,7 +557,7 @@ static int switch_camera_probe(struct platform_device *pdev)
 	if(1){	
 		ret = sysfs_create_file(kobj,&camera_attr.attr);	
 		if (ret < 0) {		
-			printk("%s: Failed to create sysfs attributes\n",__func__);	
+			printk("BAMBOO_DEBUG: %s: Failed to create sysfs attributes\n",__func__);	
 		}
 	}
 	kobj_1=kobject_create_and_add("panormadir",NULL);
@@ -569,7 +565,7 @@ static int switch_camera_probe(struct platform_device *pdev)
 		ret = sysfs_create_file(kobj_1,&panorma_attr.attr);	
 
 		if (ret < 0) {		
-			printk("%s: Failed to create panorma sysfs attributes\n",__func__);	
+			printk("BAMBOO_DEBUG: %s: Failed to create panorma sysfs attributes\n",__func__);	
 		}
 	}
 	kobj_2=kobject_create_and_add("no_panormadir",NULL);
@@ -578,12 +574,12 @@ static int switch_camera_probe(struct platform_device *pdev)
 		ret = sysfs_create_file(kobj_2,&no_panorma_attr.attr);	
 
 		if (ret < 0) {		
-			printk("%s: Failed to create no panorma sysfs attributes\n",__func__);	
+			printk("BAMBOO_DEBUG: %s: Failed to create no panorma sysfs attributes\n",__func__);	
 		}
 	}
 
 
-	pr_err("switch_camera_probe end\n");
+	pr_err("BAMBOO_DEBUG: switch_camera_probe end\n");
 	return 0;
 
 err_irq:
@@ -601,7 +597,7 @@ free_struct:
 static int switch_camera_remove(struct platform_device *pdev)
 {
 	struct switch_camera_info *data = platform_get_drvdata(pdev);
-	pr_err("switch_camera_remove\n");
+	pr_err("BAMBOO_DEBUG: switch_camera_remove\n");
 	free_irq(data->out_pin.irq, data);
 	gpio_free(data->out_pin.gpio);
 

@@ -301,6 +301,9 @@ struct msm8x16_wcd_priv {
 	unsigned long status_mask;
 	struct wcd_imped_i_ref imped_i_ref;
 	enum wcd_mbhc_imp_det_pin imped_det_pin;
+	int spk_ext_pa_gpio_l;
+	int spk_ext_pa_gpio_r;
+	int spk_hs_switch_gpio;
 };
 
 extern int msm8x16_wcd_mclk_enable(struct snd_soc_codec *codec, int mclk_enable,

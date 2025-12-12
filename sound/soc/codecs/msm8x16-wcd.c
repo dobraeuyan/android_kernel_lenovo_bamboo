@@ -3887,8 +3887,6 @@ void wcd_imped_config(struct snd_soc_codec *codec,
 		return;
 	}
 	if (value >= wcd_imped_val[ARRAY_SIZE(wcd_imped_val) - 1]) {
-		pr_err("%s, invalid imped, greater than 48 Ohm\n = %d\n",
-			__func__, value);
 		return;
 	}
 
@@ -4601,12 +4599,33 @@ static int msm8x16_wcd_codec_enable_spk_ext_pa(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_POST_PMU:
 		dev_dbg(w->codec->dev,
 			"%s: enable external speaker PA\n", __func__);
+
+		if (gpio_is_valid(msm8x16_wcd->spk_hs_switch_gpio))
+			gpio_set_value_cansleep(msm8x16_wcd->spk_hs_switch_gpio, 1);
+
+		if (gpio_is_valid(msm8x16_wcd->spk_ext_pa_gpio_l))
+			gpio_set_value_cansleep(msm8x16_wcd->spk_ext_pa_gpio_l, 1);
+
+		/* 3. Turn on Right Amp */
+		if (gpio_is_valid(msm8x16_wcd->spk_ext_pa_gpio_r))
+			gpio_set_value_cansleep(msm8x16_wcd->spk_ext_pa_gpio_r, 1);
+
 		if (msm8x16_wcd->codec_spk_ext_pa_cb)
 			msm8x16_wcd->codec_spk_ext_pa_cb(codec, 1);
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
 		dev_dbg(w->codec->dev,
-			"%s: enable external speaker PA\n", __func__);
+			"%s: disable external speaker PA\n", __func__);
+
+		if (gpio_is_valid(msm8x16_wcd->spk_ext_pa_gpio_l))
+			gpio_set_value_cansleep(msm8x16_wcd->spk_ext_pa_gpio_l, 0);
+
+		if (gpio_is_valid(msm8x16_wcd->spk_ext_pa_gpio_r))
+			gpio_set_value_cansleep(msm8x16_wcd->spk_ext_pa_gpio_r, 0);
+
+		if (gpio_is_valid(msm8x16_wcd->spk_hs_switch_gpio))
+			gpio_set_value_cansleep(msm8x16_wcd->spk_hs_switch_gpio, 0);
+
 		if (msm8x16_wcd->codec_spk_ext_pa_cb)
 			msm8x16_wcd->codec_spk_ext_pa_cb(codec, 0);
 		break;
@@ -5365,6 +5384,7 @@ static int msm8x16_wcd_codec_probe(struct snd_soc_codec *codec)
 	struct msm8x16_wcd_priv *msm8x16_wcd_priv;
 	struct msm8x16_wcd *msm8x16_wcd;
 	struct msm8x16_wcd_pdata *pdata;
+	struct device_node *np = codec->dev->of_node;
 
 	int i, ret;
 
@@ -5480,6 +5500,72 @@ static int msm8x16_wcd_codec_probe(struct snd_soc_codec *codec)
 
 	/* Set initial MICBIAS voltage level */
 	msm8x16_wcd_set_micb_v(codec);
+
+	/* --- 1. GPIO Left Amp (Physical 17) --- */
+	msm8x16_wcd_priv->spk_ext_pa_gpio_l = of_get_named_gpio(np,
+						"qcom,spk_ext_pa_l", 0);
+	if (!gpio_is_valid(msm8x16_wcd_priv->spk_ext_pa_gpio_l)) {
+		/* FALLBACK: If not in DT, use known physical pin */
+		dev_warn(codec->dev,
+			 "Lenovo: DT lookup failed for Left Amp. Forcing GPIO 17\n");
+		msm8x16_wcd_priv->spk_ext_pa_gpio_l = 928;
+	}
+
+	/* Request Left Amp GPIO */
+	if (gpio_request(msm8x16_wcd_priv->spk_ext_pa_gpio_l,
+			 "spk_ext_pa_l") == 0) {
+		gpio_direction_output(msm8x16_wcd_priv->spk_ext_pa_gpio_l, 0);
+		dev_info(codec->dev,
+			 "Lenovo: Left Amp GPIO %d initialized successfully\n",
+			 msm8x16_wcd_priv->spk_ext_pa_gpio_l);
+	} else {
+		dev_err(codec->dev,
+			"Lenovo: Failed to request Left Amp GPIO %d\n",
+			msm8x16_wcd_priv->spk_ext_pa_gpio_l);
+	}
+
+	/* --- 2. GPIO Right Amp (Physical 16) --- */
+	msm8x16_wcd_priv->spk_ext_pa_gpio_r = of_get_named_gpio(np,
+						"qcom,spk_ext_pa_r", 0);
+	if (!gpio_is_valid(msm8x16_wcd_priv->spk_ext_pa_gpio_r)) {
+		dev_warn(codec->dev,
+			 "Lenovo: DT lookup failed for Right Amp. Forcing GPIO 16\n");
+		msm8x16_wcd_priv->spk_ext_pa_gpio_r = 927;
+	}
+
+	if (gpio_request(msm8x16_wcd_priv->spk_ext_pa_gpio_r,
+			 "spk_ext_pa_r") == 0) {
+		gpio_direction_output(msm8x16_wcd_priv->spk_ext_pa_gpio_r, 0);
+		dev_info(codec->dev,
+			 "Lenovo: Right Amp GPIO %d initialized successfully\n",
+			 msm8x16_wcd_priv->spk_ext_pa_gpio_r);
+	} else {
+		dev_err(codec->dev,
+			"Lenovo: Failed to request Right Amp GPIO %d\n",
+			msm8x16_wcd_priv->spk_ext_pa_gpio_r);
+	}
+
+	/* --- 3. GPIO Switch (Physical 99) --- */
+	msm8x16_wcd_priv->spk_hs_switch_gpio = of_get_named_gpio(np,
+						"qcom,spk_hs_switch", 0);
+	if (!gpio_is_valid(msm8x16_wcd_priv->spk_hs_switch_gpio)) {
+		dev_warn(codec->dev,
+			 "Lenovo: DT lookup failed for Switch. Forcing GPIO 99\n");
+		msm8x16_wcd_priv->spk_hs_switch_gpio = 1010;
+	}
+
+	if (gpio_request(msm8x16_wcd_priv->spk_hs_switch_gpio,
+			 "spk_hs_switch") == 0) {
+		/* Initialize to 0 (Headphones) for safety */
+		gpio_direction_output(msm8x16_wcd_priv->spk_hs_switch_gpio, 0);
+		dev_info(codec->dev,
+			 "Lenovo: HS Switch GPIO %d initialized successfully\n",
+			 msm8x16_wcd_priv->spk_hs_switch_gpio);
+	} else {
+		dev_err(codec->dev,
+			"Lenovo: Failed to request HS Switch GPIO %d\n",
+			msm8x16_wcd_priv->spk_hs_switch_gpio);
+	}
 
 	/* Set initial cap mode */
 	msm8x16_wcd_configure_cap(codec, false, false);

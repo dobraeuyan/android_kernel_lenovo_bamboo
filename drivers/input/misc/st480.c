@@ -436,6 +436,10 @@ static void st480_work_func(void)
 			mag.mag_z = mag.mag_z * (1 + (60/128/4096) * (((buffer[1]<<8)|(buffer[2])) - 46244));
 		}
 
+		SENODIADBG("st480 raw data: x = %d, y = %d, z = %d \n",mag.mag_x,mag.mag_y,mag.mag_z);
+		printk("st480 raw data: x = %d, y = %d, z = %d \n",mag.mag_x,mag.mag_y,mag.mag_z);
+
+		
 		}else 
 			dev_err(&st480->client->dev, "ecc error detected!\n");
 

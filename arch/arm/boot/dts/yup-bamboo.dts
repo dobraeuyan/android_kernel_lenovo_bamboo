@@ -4633,7 +4633,7 @@
 					qcom,vib-vtg-level-mV = <0xc1c>;
 				};
 
-				tombak_codec: qcom,tombak_codec@f000 {
+				8909_wcd_codec@f000 {
 					compatible = "qcom,msm8x16_wcd_codec";
 					reg = <0xf000 0x100>;
 					interrupt-parent = <0xb5>;
@@ -4654,14 +4654,8 @@
 					cdc-vdd-mic-bias-supply = <0xb1>;
 					qcom,cdc-vdd-mic-bias-voltage = <0x2eebb8 0x2eebb8>;
 					qcom,cdc-vdd-mic-bias-current = <0x1388>;
-					/* Y las propiedades que faltaban */
-					qcom,cdc-vdd-spkdrv-voltage = <3700000 3700000>;
-					qcom,cdc-vdd-spkdrv-current = <200000>;    
 					qcom,cdc-mclk-clk-rate = <0x927c00>;
-					cdc-vdd-spkdrv-supply = <&regulator_spk_supply>; // Añadido
-					qcom,cdc-static-supplies = "cdc-vdda-h", "cdc-vdd-px",
-									"cdc-vdd-pa", "cdc-vdda-cp",
-									"cdc-vdd-spkdrv"; // <-- AÑADIDO: el nombre a la lista
+					qcom,cdc-static-supplies = "cdc-vdda-h\0cdc-vdd-px\0cdc-vdd-pa\0cdc-vdda-cp";
 					qcom,cdc-on-demand-supplies = "cdc-vdd-mic-bias";
 					linux,phandle = <0x126>;
 					phandle = <0x126>;
@@ -4966,10 +4960,8 @@
 				qcom,vbusst-gpio = <0x8d 0x03 0x00>;
 				qcom,stat-pulsed-irq;
 				qcom,chg-inhibit-disabled;
-				qcom,float-voltage-mv = <0x10e0>;
-				qcom,iterm-disabled;
-				qcom,iterm-ma = <0x100>;
-				qcom,recharge-disabled;
+				qcom,float-voltage-mv = <0x107c>;
+				qcom,iterm-ma = <0x96>;
 				qcom,recharge-mv = <0x64>;
 				qcom,charging-timeout = <0x180>;
 				qcom,otg-batt-curr-limit = <0x3b6>;
@@ -5315,7 +5307,7 @@
 				vcc_i2c-supply = <0x92>;
 				si-en,sdb-gpio = <0x8d 0x1b 0x00>;
 				si-en,i2c-pull-up;
-				si-en,led-name = "notify-led";
+				si-en,led-name = "white-notification";
 			};
 		};
 
@@ -5334,7 +5326,7 @@
 			linux,contiguous-region = <0x02>;
 		};
 
-		msm_pcm_dsp_0: qcom,msm-pcm {
+		qcom,msm-pcm {
 			compatible = "qcom,msm-pcm-dsp";
 			qcom,msm-pcm-dsp-id = <0x00>;
 			linux,phandle = <0xfe>;
@@ -5802,15 +5794,13 @@
 			qcom,ce-opp-freq = <0x5f5e100>;
 		};
 
-		regulator_spk_supply: regulator_spk {
-			status = "okay";
+		regulator_spk {
+			status = "disabled";
 			compatible = "regulator-fixed";
 			regulator-name = "spk_vreg";
 			startup-delay-us = <0x00>;
 			enable-active-high;
 			gpio = <0x8d 0x04 0x00>;
-			phandle = <0x130>; // <-- AÑADIDO: Usa un número único
-			linux,phandle = <0x130>; // <-- AÑADIDO: Usa un número único
 		};
 
 		qcom,spm@b089000 {
@@ -7968,39 +7958,28 @@
 			qcom,model = "msm8909-skue-snd-card";
 			qcom,msm-snd-card-id = <0x00>;
 			qcom,msm-codec-type = "internal";
-			qcom,msm-ext-pa = "primary"; // Necesario para que el HAL encuentre el switch
+			qcom,msm-ext-pa = "primary";
 			qcom,msm-mclk-freq = <0x927c00>;
+			qcom,msm-mbhc-hphl-swh = <0x01>;
+			qcom,msm-mbhc-gnd-swh = <0x00>;
+			qcom,msm-hs-micbias-type = "internal";
+			qcom,msm-micbias1-ext-cap;
+			qcom,msm-micbias2-ext-cap;
+			qcom,spk_ext_pa_l = <0x8d 0x11 0x00>;
+			qcom,spk_ext_pa_r = <0x8d 0x10 0x00>;
+			qcom,spk_hs_switch = <0x8d 0x63 0x00>;
+			qcom,audio-routing = "RX_BIAS\0MCLK\0SPK_RX_BIAS\0MCLK\0INT_LDO_H\0MCLK\0MIC BIAS Internal1\0Handset Mic\0MIC BIAS Internal2\0Headset Mic\0AMIC1\0MIC BIAS Internal1\0AMIC2\0MIC BIAS Internal2";
 			pinctrl-names = "cdc_lines_act\0cdc_lines_sus";
 			pinctrl-0 = <0xf8 0xf9 0xfa>;
 			pinctrl-1 = <0xfb 0xfc 0xfd>;
-			/*
-			 * ENLACE MÍNIMO: Enlazamos solo lo esencial para la reproducción
-			 * usando los phandles estáticos de tu DTS original.
-			 */
-
-			// Plataforma: Solo el DSP de playback (phandle 0xfe)
-			asoc-platform = <0xfe>;
-			asoc-platform-names = "msm-pcm-dsp.0";
-
-			// CPU: Solo el primario MI2S (phandle 0x10c de tu DTS stock)
-			asoc-cpu = <0x10c>;
-			asoc-cpu-names = "msm-dai-q6-mi2s.0";
-
-			// Codec: El stub y el tombak (phandles 0x125 y 0x126 de tu DTS stock)
+			asoc-platform = <0xfe 0xff 0x100 0x101 0x102 0x103 0x104 0x105 0x106 0x107 0x108 0x109>;
+			asoc-platform-names = "msm-pcm-dsp.0\0msm-pcm-dsp.1\0msm-voip-dsp\0msm-pcm-voice\0msm-pcm-loopback\0msm-compress-dsp\0msm-pcm-hostless\0msm-pcm-afe\0msm-lsm-client\0msm-pcm-routing\0msm-pcm-lpa\0msm-voice-svc";
+			asoc-cpu = <0x10a 0x10b 0x10c 0x10d 0x10e 0x10f 0x110 0x111 0x112 0x113 0x114 0x115 0x116 0x117 0x118 0x119 0x11a 0x11b 0x11c 0x11d 0x11e 0x11f 0x120 0x121 0x122 0x123 0x124>;
+			asoc-cpu-names = "msm-dai-q6-auxpcm.1\0msm-dai-q6-hdmi.8\0msm-dai-q6-mi2s.0\0msm-dai-q6-mi2s.1\0msm-dai-q6-mi2s.2\0msm-dai-q6-mi2s.3\0msm-dai-q6-dev.16384\0msm-dai-q6-dev.16385\0msm-dai-q6-dev.16386\0msm-dai-q6-dev.16387\0msm-dai-q6-dev.16390\0msm-dai-q6-dev.16391\0msm-dai-q6-dev.16392\0msm-dai-q6-dev.16393\0msm-dai-q6-dev.12288\0msm-dai-q6-dev.12289\0msm-dai-q6-dev.12290\0msm-dai-q6-dev.12292\0msm-dai-q6-dev.12293\0msm-dai-q6-dev.224\0msm-dai-q6-dev.225\0msm-dai-q6-dev.241\0msm-dai-q6-dev.240\0msm-dai-q6-dev.32771\0msm-dai-q6-dev.32772\0msm-dai-q6-dev.32773\0msm-dai-q6-dev.32770";
 			asoc-codec = <0x125 0x126>;
-			asoc-codec-names = "msm-stub-codec.1", "tombak_codec";
-
-			// Rutas de audio esenciales para relojes y bias
-			qcom,audio-routing =
-				"RX_BIAS", "MCLK",
-				"SPK_RX_BIAS", "MCLK",
-				"INT_LDO_H", "MCLK",
-				"MIC BIAS Internal1", "Handset Mic",
-				"MIC BIAS Internal2", "Headset Mic",
-				"AMIC1", "MIC BIAS Internal1",
-				"AMIC2", "MIC BIAS Internal2";
+			asoc-codec-names = "msm-stub-codec.1\0tombak_codec";
 		};
-		
+
 		hall_switch {
 			compatible = "hall-switch,och175";
 			pinctrl-names = "hall_active\0hall_suspend";

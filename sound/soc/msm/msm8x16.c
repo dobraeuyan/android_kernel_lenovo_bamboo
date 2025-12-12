@@ -396,8 +396,6 @@ static const struct snd_soc_dapm_widget msm8x16_dapm_widgets[] = {
 	SND_SOC_DAPM_MIC("Digital Mic1", NULL),
 	SND_SOC_DAPM_MIC("Digital Mic2", NULL),
 	SND_SOC_DAPM_MIC("Digital Mic3", NULL),
-	SND_SOC_DAPM_SPK("Left Speaker", NULL),
-	SND_SOC_DAPM_SPK("Right Speaker", NULL),
 };
 
 static struct snd_soc_dapm_route wcd9335_audio_paths[] = {
@@ -2714,8 +2712,6 @@ struct snd_soc_card snd_soc_card_msm8916 = {
 	.name		= "msm8x16-snd-card",
 	.dai_link	= msm8x16_wcd_dai_links,
 	.num_links	= ARRAY_SIZE(msm8x16_wcd_dai_links),
-	.dapm_widgets = msm8x16_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(msm8x16_dapm_widgets),
 };
 
 struct snd_soc_card snd_soc_card_9326_msm8916 = {
